@@ -49,6 +49,30 @@ Then add your remote and push.
 ## Step 3 — set the environment
 
 Copy `deploy/.env.example` into the service's **Environment** tab and fill it in.
+Dokploy writes that tab to `deploy/.env` in the checkout and passes it to compose
+as `--env-file`, so these values drive both interpolation and build arguments.
+
+A minimal working set, for a host that does not have TLS yet:
+
+```
+DOMAIN=api.example.com
+MERCUR_BACKEND_URL=http://api.example.com
+JWT_SECRET=...
+COOKIE_SECRET=...
+POSTGRES_PASSWORD=...
+STORE_CORS=http://api.example.com
+ADMIN_CORS=http://api.example.com
+VENDOR_CORS=http://api.example.com
+AUTH_CORS=http://api.example.com
+```
+
+Switch every `http://` above to `https://` once the certificate is issued, and
+**Rebuild** — `MERCUR_BACKEND_URL` is compiled into the panels.
+
+If `DOMAIN` is missing the deploy stops immediately with
+`required variable DOMAIN is missing a value`. That is deliberate: a blank
+`Host()` rule would give Traefik a router that matches nothing, which looks
+exactly like the 404 described under [Troubleshooting](#troubleshooting).
 
 Generate the secrets with:
 
