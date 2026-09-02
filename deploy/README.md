@@ -122,6 +122,12 @@ restart and the server and worker cannot coordinate.
 service and set `MEDUSA_WORKER_MODE: shared` on `backend`; one process then
 handles both HTTP and jobs.
 
+**Database SSL.** Medusa turns database SSL on whenever `NODE_ENV=production`.
+The bundled Postgres serves no TLS, so its `DATABASE_URL` carries
+`?sslmode=disable` — without it the connection stalls until Medusa's 10s timeout
+and migrations fail with a misleading "incorrect database URL" error. If you
+point `DATABASE_URL` at a managed database instead, use `?sslmode=require`.
+
 **Postgres backups are yours to configure.** The database lives in the
 `postgres-data` volume. Set up Dokploy's backup schedule, or point
 `DATABASE_URL` at a managed Postgres instead of the bundled service.
@@ -151,6 +157,18 @@ cp deploy/.env.example deploy/.env && docker compose -f deploy/docker-compose.ym
 
 (Local runs need `docker network create dokploy-network` once, since the compose
 file expects that network to already exist on a Dokploy host.)
+
+## Verified
+
+This setup was built and run end to end before you got it:
+
+- image builds clean, 811MB
+- both panels bundled into the artifact at `/dashboard` and `/seller`, with their
+  asset base paths validated by `bundle-dashboards.mjs` in production mode
+- `docker compose up` → migrations run, `GET /health` returns 200
+- `/dashboard/` and `/seller/` return 200 and their JS bundles load
+- `backend` starts in `server` mode, `worker` in `worker` mode, and the worker
+  does not run migrations
 
 ## Upgrading Mercur
 

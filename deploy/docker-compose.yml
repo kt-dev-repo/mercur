@@ -59,7 +59,11 @@ services:
       RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
       RUN_SEED: ${RUN_SEED:-false}
       MEDUSA_WORKER_MODE: server
-      DATABASE_URL: postgres://${POSTGRES_USER:-mercur}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mercur}
+      # sslmode=disable is required for the bundled Postgres: Medusa turns database SSL
+      # on when NODE_ENV=production, and this container serves no TLS, so the connection
+      # stalls until Medusa's 10s timeout and migrations fail. Set DATABASE_URL yourself
+      # to point at a managed Postgres — use sslmode=require there.
+      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-mercur}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mercur}?sslmode=disable}
       REDIS_URL: redis://redis:6379
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
       COOKIE_SECRET: ${COOKIE_SECRET:?set COOKIE_SECRET}
@@ -100,7 +104,11 @@ services:
     environment:
       NODE_ENV: production
       MEDUSA_WORKER_MODE: worker
-      DATABASE_URL: postgres://${POSTGRES_USER:-mercur}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mercur}
+      # sslmode=disable is required for the bundled Postgres: Medusa turns database SSL
+      # on when NODE_ENV=production, and this container serves no TLS, so the connection
+      # stalls until Medusa's 10s timeout and migrations fail. Set DATABASE_URL yourself
+      # to point at a managed Postgres — use sslmode=require there.
+      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-mercur}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mercur}?sslmode=disable}
       REDIS_URL: redis://redis:6379
       JWT_SECRET: ${JWT_SECRET}
       COOKIE_SECRET: ${COOKIE_SECRET}

@@ -104,7 +104,12 @@ RUN npm run build
 # package.json into the artifact; bundle-dashboards.mjs has already stripped the
 # workspace-protocol entries that cannot be resolved from a registry.
 WORKDIR /app/packages/api/.medusa/server
-RUN npm install --omit=dev --no-audit --no-fund
+
+# Reconcile the artifact manifest with a standalone install: drop the panel
+# workspaces from devDependencies and carry the monorepo root's `overrides` in.
+# See deploy/prepare-artifact.mjs for why both are required.
+RUN node /app/deploy/prepare-artifact.mjs /app/package.json ./package.json \
+    && npm install --omit=dev --no-audit --no-fund
 
 # ---------- Stage 2: runtime ----------
 FROM node:22-bookworm-slim AS runner
