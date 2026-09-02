@@ -48,45 +48,76 @@ Then add your remote and push.
 
 ## Step 3 — set the environment
 
-Copy `deploy/.env.example` into the service's **Environment** tab and fill it in.
-Dokploy writes that tab to `deploy/.env` in the checkout and passes it to compose
-as `--env-file`, so these values drive both interpolation and build arguments.
-
-A minimal working set, for a host that does not have TLS yet:
+Go to your service in Dokploy, open the **Environment** tab, and paste the block
+below. Replace `api.example.com` with your own hostname everywhere it appears,
+and fill in the three secrets. Then Save.
 
 ```
 DOMAIN=api.example.com
 MERCUR_BACKEND_URL=http://api.example.com
-JWT_SECRET=...
-COOKIE_SECRET=...
-POSTGRES_PASSWORD=...
+
+JWT_SECRET=
+COOKIE_SECRET=
+POSTGRES_PASSWORD=
+
+POSTGRES_USER=mercur
+POSTGRES_DB=mercur
+
 STORE_CORS=http://api.example.com
 ADMIN_CORS=http://api.example.com
 VENDOR_CORS=http://api.example.com
 AUTH_CORS=http://api.example.com
+
+RUN_MIGRATIONS=true
+RUN_SEED=false
 ```
 
-Switch every `http://` above to `https://` once the certificate is issued, and
-**Rebuild** — `MERCUR_BACKEND_URL` is compiled into the panels.
-
-If `DOMAIN` is missing the deploy stops immediately with
-`required variable DOMAIN is missing a value`. That is deliberate: a blank
-`Host()` rule would give Traefik a router that matches nothing, which looks
-exactly like the 404 described under [Troubleshooting](#troubleshooting).
-
-Generate the secrets with:
+Generate each secret separately — run this three times and use a different
+result for each:
 
 ```bash
 openssl rand -base64 48
 ```
 
-Run that three times — `JWT_SECRET`, `COOKIE_SECRET` and `POSTGRES_PASSWORD` must
-each be different.
+Set `POSTGRES_PASSWORD` once, before the first deploy, and then leave it alone.
+Postgres bakes it into the data directory the first time it starts; changing it
+later does not change the database, it just stops the backend from being able to
+connect. Changing it after the fact means deleting the `postgres-data` volume,
+which deletes your data with it.
 
-`MERCUR_BACKEND_URL` must be the exact public https origin you will attach in
-Step 4, with no trailing slash. It is compiled into the admin and vendor panels
-at image build time — if you change it later you must **Rebuild**, not just
-restart, or the panels will keep calling the old origin from the browser.
+That block is the whole configuration. You do not need to touch any file in the
+repository; Dokploy takes what you paste here and hands it to Docker Compose.
+
+### What the two URL settings are for
+
+They look redundant but do different jobs, and both are required:
+
+- **`DOMAIN`** is the bare hostname, with no `http://` and no trailing slash.
+  Traefik uses it to decide which incoming requests belong to this stack.
+- **`MERCUR_BACKEND_URL`** is the full address **including the scheme**. It gets
+  compiled into the admin and vendor panels so the browser knows where to send
+  API calls.
+
+They must name the same host. If they disagree, or if the scheme is wrong, the
+login page loads but signing in fails with "Failed to fetch".
+
+### http or https?
+
+Use `http://` until you have a working certificate — that is the common case on a
+first deploy. Once Let's Encrypt has issued one, change every `http://` in the
+block to `https://` and click **Rebuild** rather than Restart, because
+`MERCUR_BACKEND_URL` is compiled into the panels and only a rebuild recompiles
+them.
+
+### If the deploy stops immediately
+
+```
+required variable DOMAIN is missing a value
+```
+
+means `DOMAIN` is not set. This is intentional — an empty value would give
+Traefik a rule matching nothing, which looks identical to the 404 in
+[Troubleshooting](#troubleshooting). Set it and deploy again.
 
 ## Step 4 — attach the domain
 
