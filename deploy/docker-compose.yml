@@ -1,11 +1,11 @@
 # ---------------------------------------------------------------------------
 # Mercur marketplace — Dokploy Compose stack
 #
-# In Dokploy: Project -> Create Service -> Compose, point it at this repo, set
-# "Compose Path" to ./deploy/docker-compose.yml, paste the variables from
-# deploy/.env.example
-# into the Environment tab, then attach a domain to the `backend` service on
-# port 9000 (Domains tab).
+# Setup instructions are in deploy/README.md. In short: create a Compose service
+# in Dokploy pointing at this repo, set "Compose Path" to
+# ./deploy/docker-compose.yml, and paste deploy/.env.example into the
+# Environment tab. The domain is configured with the DOMAIN variable below — you
+# do not need to add one in Dokploy's Domains tab.
 #
 # Two variables decide whether this works at all:
 #   DOMAIN              the hostname Traefik routes (bare host, no scheme)
@@ -49,7 +49,7 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
       args:
-        MERCUR_BACKEND_URL: ${MERCUR_BACKEND_URL:?set MERCUR_BACKEND_URL to your public https origin}
+        MERCUR_BACKEND_URL: ${MERCUR_BACKEND_URL:?set MERCUR_BACKEND_URL to the full origin the browser will use, e.g. http://api.example.com}
     restart: unless-stopped
     command: ["server"]
     depends_on:
@@ -107,7 +107,7 @@ services:
       - "traefik.enable=true"
       - "traefik.docker.network=dokploy-network"
       - "traefik.http.services.${TRAEFIK_ROUTER:-mercur}.loadbalancer.server.port=9000"
-      - "traefik.http.routers.${TRAEFIK_ROUTER:-mercur}-web.rule=Host(`${DOMAIN:?set DOMAIN to the hostname Traefik should route, e.g. api-mercur.example.com}`)"
+      - "traefik.http.routers.${TRAEFIK_ROUTER:-mercur}-web.rule=Host(`${DOMAIN:?set DOMAIN to the bare hostname Traefik should route, e.g. api.example.com}`)"
       - "traefik.http.routers.${TRAEFIK_ROUTER:-mercur}-web.entrypoints=web"
       - "traefik.http.routers.${TRAEFIK_ROUTER:-mercur}-web.service=${TRAEFIK_ROUTER:-mercur}"
       # HTTPS. Harmless before DNS/certificates are ready — the web router keeps

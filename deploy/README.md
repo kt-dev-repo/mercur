@@ -226,7 +226,8 @@ Everything below is background. You do not need it to deploy.
 | `entrypoint.sh` | Waits for Postgres, runs migrations, then starts Medusa |
 | `docker-compose.yml` | Postgres, Redis, backend and worker |
 | `medusa-config.production.ts` | Production config overlay — adds Redis and worker mode |
-| `.env.example` | The same variable block as Step 3 |
+| `prepare-artifact.mjs` | Build-time fixups so the runtime image installs cleanly |
+| `.env.example` | The Step 3 block, plus the optional settings listed below |
 
 The upstream project is left untouched. Every deployment file lives in this
 folder, so pulling a newer Mercur never conflicts with it. The production config
@@ -250,6 +251,14 @@ is applied as an overlay *inside the image only*, leaving
 - **Demo data.** Set `RUN_SEED=true` before the first deploy for a demo catalog
   and seller (`seller@mercur.dev` / `supersecret`). It runs once; a marker on the
   uploads volume stops it repeating.
+
+### Optional settings
+
+`.env.example` documents a few settings the Step 3 block leaves out, each with a
+working default: `DATABASE_URL` (below), `TRAEFIK_CERTRESOLVER` and
+`TRAEFIK_ROUTER` (change the latter only if you run several of these stacks on
+one host), `FILE_BACKEND_URL`, and the storefront hooks `MERCUR_VENDOR_URL`,
+`STOREFRONT_REVALIDATE_URL` and `STOREFRONT_REVALIDATE_SECRET`.
 
 ### Using a managed database
 
