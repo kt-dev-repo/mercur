@@ -1,56 +1,51 @@
 # Deploying Mercur on Dokploy
 
-This repo is a Mercur marketplace project (the `templates/basic` layout that
-`bun create mercur-app` produces) with a production Docker setup added.
+This deploys your whole marketplace as one service. When it is running you get:
 
-**The upstream project tree is unmodified.** Every deployment file lives in this
-`deploy/` directory, so `git pull` and future Mercur upgrades never conflict with
-it. The one production config change (Redis + worker mode) is kept as an overlay
-in `deploy/medusa-config.production.ts` and copied over
-`packages/api/medusa-config.ts` *inside the image only* — see
-[Upgrading](#upgrading-mercur).
-
-One container serves everything:
-
-| Path | What |
+| URL | What it is |
 |---|---|
-| `/store`, `/admin`, `/vendor`, `/auth` | Medusa + Mercur APIs |
-| `/dashboard` | Admin panel (marketplace operator) |
-| `/seller` | Vendor panel (sellers) |
-| `/static` | Uploaded files (local file provider) |
+| `https://YOUR-DOMAIN/dashboard` | Admin panel — you, the marketplace operator |
+| `https://YOUR-DOMAIN/seller` | Vendor panel — your sellers |
+| `https://YOUR-DOMAIN/store` | Store API — for your storefront |
+| `https://YOUR-DOMAIN/health` | Returns 200 when the backend is up |
 
-## What's in here
+Follow the steps in order. Everything you configure is done in the Dokploy web
+interface — you never edit a file in this repository.
 
-| File | Purpose |
-|---|---|
-| `deploy/Dockerfile` | Two-stage build: `bun install` + `turbo run build` → `packages/api/.medusa/server` artifact on a slim Node 22 runtime |
-| `deploy/entrypoint.sh` | Waits for Postgres, runs `medusa db:migrate`, optionally seeds, then `medusa start` |
-| `deploy/docker-compose.yml` | Postgres 16 + Redis 7 + backend + worker, wired to Dokploy's Traefik network |
-| `deploy/medusa-config.production.ts` | Config overlay: adds the Redis modules + `workerMode`. Applied only inside the image |
-| `deploy/.env.example` | Every variable you need to paste into Dokploy |
-| `.dockerignore` | Repo root, because the build context is the repo root |
+## Before you start
 
-## Step 1 — push this to your own Git repo
+- A Dokploy host with at least **4 GB of RAM**. The first build is heavy.
+- A **domain name** you can point at that host, e.g. `api.example.com`.
+- This repository pushed to a Git repo Dokploy can read.
 
-Dokploy deploys from Git, so this needs to be a repo you control:
+---
+
+## Step 1 — point your domain at the server
+
+Create a DNS **A record** for your hostname pointing at your Dokploy server's IP
+address. Do this first: certificates cannot be issued until it resolves.
+
+Check it with:
 
 ```bash
-cd mercur-dokploy && git init && git add -A && git commit -m "Mercur marketplace + Dokploy deploy setup"
+dig +short api.example.com
 ```
 
-Then add your remote and push.
+You should see your server's IP.
 
-## Step 2 — create the Compose service in Dokploy
+## Step 2 — create the service in Dokploy
 
-1. **Project → Create Service → Compose**
-2. **Provider**: your Git repo, branch `main`
+1. Open your project and choose **Create Service → Compose**
+2. **Provider**: the Git repository holding this code, branch `main`
 3. **Compose Path**: `./deploy/docker-compose.yml`
+
+Do not deploy yet — set the environment first.
 
 ## Step 3 — set the environment
 
-Go to your service in Dokploy, open the **Environment** tab, and paste the block
-below. Replace `api.example.com` with your own hostname everywhere it appears,
-and fill in the three secrets. Then Save.
+Open the service's **Environment** tab and paste this in. Replace
+`api.example.com` with your own hostname everywhere it appears, fill in the three
+secrets, then Save.
 
 ```
 DOMAIN=api.example.com
@@ -72,236 +67,253 @@ RUN_MIGRATIONS=true
 RUN_SEED=false
 ```
 
-Generate each secret separately — run this three times and use a different
-result for each:
+Generate the three secrets by running this three times, using a different result
+for each:
 
 ```bash
 openssl rand -base64 48
 ```
 
-Set `POSTGRES_PASSWORD` once, before the first deploy, and then leave it alone.
-Postgres bakes it into the data directory the first time it starts; changing it
-later does not change the database, it just stops the backend from being able to
-connect. Changing it after the fact means deleting the `postgres-data` volume,
-which deletes your data with it.
+Two warnings worth reading before you save.
 
-That block is the whole configuration. You do not need to touch any file in the
-repository; Dokploy takes what you paste here and hands it to Docker Compose.
+**Set `POSTGRES_PASSWORD` once and never change it.** Postgres writes it into the
+database on first start. Changing it later does not update the database, it just
+locks your backend out — and the only fix is deleting the database volume, which
+deletes your data.
 
-### What the two URL settings are for
+**Start with `http://`, not `https://`.** You do not have a certificate yet.
+Step 6 covers switching over once you do.
 
-They look redundant but do different jobs, and both are required:
+### Why there are two URL settings
 
-- **`DOMAIN`** is the bare hostname, with no `http://` and no trailing slash.
-  Traefik uses it to decide which incoming requests belong to this stack.
-- **`MERCUR_BACKEND_URL`** is the full address **including the scheme**. It gets
-  compiled into the admin and vendor panels so the browser knows where to send
-  API calls.
+`DOMAIN` and `MERCUR_BACKEND_URL` look like duplicates. They are not:
 
-They must name the same host. If they disagree, or if the scheme is wrong, the
-login page loads but signing in fails with "Failed to fetch".
+- **`DOMAIN`** — just the hostname, no `http://`, no trailing slash. Dokploy's
+  router uses it to recognise requests meant for your marketplace.
+- **`MERCUR_BACKEND_URL`** — the full address including `http://` or `https://`.
+  It is built into the admin and vendor panels so the browser knows where to send
+  API requests.
 
-### http or https?
+They must refer to the same host, and the scheme on `MERCUR_BACKEND_URL` must
+match what you type into your browser. If they disagree, the login page appears
+but signing in fails with "Failed to fetch".
 
-Use `http://` until you have a working certificate — that is the common case on a
-first deploy. Once Let's Encrypt has issued one, change every `http://` in the
-block to `https://` and click **Rebuild** rather than Restart, because
-`MERCUR_BACKEND_URL` is compiled into the panels and only a rebuild recompiles
-them.
+## Step 4 — deploy
 
-### If the deploy stops immediately
+Click **Deploy**.
 
-```
-required variable DOMAIN is missing a value
-```
+The first build takes roughly **10–20 minutes**. It downloads the full Medusa
+dependency tree and compiles both panels. Later deploys reuse the cache and are
+much faster.
 
-means `DOMAIN` is not set. This is intentional — an empty value would give
-Traefik a rule matching nothing, which looks identical to the 404 in
-[Troubleshooting](#troubleshooting). Set it and deploy again.
-
-## Step 4 — attach the domain
-
-Set `DOMAIN` in the environment to the bare hostname (no scheme, no trailing
-slash). The compose file turns it into Traefik router labels on the `backend`
-service, and attaches that service to the external `dokploy-network`.
-
-**Both parts are required.** Being on `dokploy-network` only makes the container
-reachable; without a router rule Traefik has no route for the host and answers
-every request with its own plain-text `404 page not found`. If you see that,
-`DOMAIN` is unset or the labels did not apply — check `docker inspect` on the
-backend container for `traefik.http.routers.*`.
-
-You can also add the domain in Dokploy's **Domains** tab (`backend`, port 9000).
-That is redundant with the labels but harmless — Traefik ends up with two routers
-pointing at the same service.
-
-## Step 5 — first deploy
-
-Set `RUN_SEED=true` **for the first deploy only** if you want the demo catalog
-and the demo seller (`seller@mercur.dev` / `supersecret`). Then hit **Deploy**.
-
-The first build pulls the full Medusa dependency tree and builds both panels —
-expect roughly 10–20 minutes and give the server at least 4 GB of RAM. Later
-builds reuse the Docker layer cache.
-
-When it finishes, set `RUN_SEED` back to `false` and redeploy so the seed does
-not run again.
-
-## Step 6 — create your admin user
-
-From the service's **Terminal** (or `docker exec` on the host), on the `backend`
-container:
+When it finishes, check it:
 
 ```bash
-cd /app && npx medusa user -e you@example.com -p 'a-strong-password'
+curl -i http://api.example.com/health
 ```
 
-The `cd /app` is required. Some terminals (Dokploy's included) drop you in `/`,
-and `npx` resolves binaries from the current directory's `node_modules` — from
-`/` it fails with `npm error could not determine executable to run`. There is no
-`sudo` in the image and none is needed; it runs as the unprivileged `node` user,
-which owns the app.
+`HTTP/1.1 200 OK` means you are up. Anything else — start at
+[Troubleshooting](#troubleshooting).
 
-Then sign in at `https://your-domain/dashboard`. Sellers register and sign in at
-`https://your-domain/seller`.
+## Step 5 — create your admin user
+
+**A fresh deployment has no users.** Nothing creates an administrator for you, so
+you must create one before you can sign in.
+
+Open the service's **Terminal** in Dokploy, select the `backend` container, and
+run:
+
+```bash
+cd /app && npx medusa user -e you@example.com -p 'your-password'
+```
+
+Wait for `User created successfully.`
+
+`cd /app` is required — Dokploy's terminal starts you in `/`, where the command
+cannot find itself and fails with `could not determine executable to run`. Do not
+use `sudo`; it is not installed and is not needed.
+
+Confirm it worked before opening a browser:
+
+```bash
+curl -s -X POST http://api.example.com/auth/user/emailpass \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com","password":"your-password"}'
+```
+
+A long `{"token":"eyJ..."}` means success. Now sign in at
+`http://api.example.com/dashboard`.
+
+## Step 6 — switch on HTTPS
+
+Once DNS resolves, Dokploy can obtain a Let's Encrypt certificate for your
+domain. After `https://api.example.com/health` works:
+
+1. Go back to the **Environment** tab
+2. Change **every** `http://` to `https://` — that is `MERCUR_BACKEND_URL` and
+   all four `*_CORS` values
+3. Save, then click **Rebuild**
+
+**It must be Rebuild, not Restart.** `MERCUR_BACKEND_URL` is compiled into the
+panels' JavaScript, and only a rebuild recompiles them. A restart leaves the
+panels calling `http://` from an `https://` page, which browsers block — you get
+"Failed to fetch" on login.
+
+---
 
 ## Troubleshooting
 
-**Traefik's plain-text `404 page not found` on every path.** No router matches the
-host. `DOMAIN` is unset, does not match the hostname you are opening, or the
-stack was deployed before the Traefik labels existed. Redeploy with `DOMAIN` set.
+### Every page shows a plain `404 page not found`
 
-**The login page renders, then "Failed to fetch" on submit.** The panels call the
-origin baked in at build time, and it does not match the origin in your address
-bar — usually `https://` baked while you browse `http://`, or vice versa. Fix
-`MERCUR_BACKEND_URL` so the scheme and host match exactly, then **Rebuild**
-(a restart is not enough, the value is compiled into the JS bundle). Confirm what
-was baked with:
+That page comes from Dokploy's router, not from Mercur — it means no route
+matches your hostname. Either `DOMAIN` is not set, or it does not match the
+address you are visiting. Fix it in the **Environment** tab and deploy again.
+
+### The deploy stops immediately with "required variable DOMAIN is missing a value"
+
+`DOMAIN` is empty. This check is deliberate: deploying without it would produce a
+router matching nothing, which looks exactly like the 404 above. Set it and
+deploy again.
+
+### The login page loads, but signing in says "Failed to fetch"
+
+The panels are calling a different address than the one in your address bar —
+almost always an `http://` / `https://` mismatch. Check what they were built
+with:
 
 ```bash
-curl -s https://your-domain/dashboard/ | grep -o '/dashboard/assets/index-[^"]*\.js'
-curl -s https://your-domain/dashboard/assets/index-XXXX.js | grep -oE 'https?://[a-zA-Z0-9._:-]+' | sort -u
+ASSET=$(curl -s http://api.example.com/dashboard/ | grep -o '/dashboard/assets/index-[^"]*\.js' | head -1)
+curl -s "http://api.example.com$ASSET" | grep -o 'backendUrl:"[^"]*"'
 ```
 
-**Login is rejected with `Invalid email or password`.** If `/health` returns 200
-and the panel loads, the stack is fine and this is a genuine credential
-rejection — most often because the database has no users at all. A fresh deploy
-creates none: nothing bootstraps an admin, and the seed does not either unless
-you set `RUN_SEED=true`. Check first:
+The address it prints must match your browser's, scheme included. If it does not,
+correct `MERCUR_BACKEND_URL` and **Rebuild**.
+
+### Signing in says "Invalid email or password"
+
+If `/health` returns 200 and the panel loads, the deployment is healthy and the
+credentials genuinely did not match. Usually this means no account was ever
+created — see [Step 5](#step-5--create-your-admin-user). Check:
 
 ```bash
 docker exec $(docker ps -qf name=postgres) psql -U mercur -d mercur \
   -c 'select id, email from "user";'
 ```
 
-`(0 rows)` means no account was ever created — go back to
-[Create your admin user](#step-6--create-your-admin-user). Note that the account
-lives in two tables: `user` holds the identity and `provider_identity` holds the
-password. `medusa user` writes both; a `user` row with no matching
-`provider_identity` also produces this error.
+`(0 rows)` confirms it. Run the Step 5 command and try again.
 
-**Worker sits in `Created` and never starts.** It gates on `backend` reporting
-healthy. If the backend never becomes healthy, check its logs — on first boot
-migrations can take minutes, which is why `start_period` is 600s.
+An account spans two tables: `user` holds the identity, `provider_identity` holds
+the password. `medusa user` writes both. A `user` row without a matching
+`provider_identity` gives this same error.
 
-## Things worth knowing before you go live
+### The worker container never starts
 
-**Uploads are on a local volume.** The default file provider writes to the
-`uploads` volume at `/app/static`. It survives redeploys, but it does not survive
-moving to another host and it cannot be shared across replicas. Before scaling
-the `backend` service past one instance, switch to the S3 provider in
-`deploy/medusa-config.production.ts`.
+It waits for the backend to report healthy, which only happens once migrations
+have finished. On a first deploy that can take several minutes. If the backend
+never becomes healthy, read its logs — the real error is there.
 
-**Migrations run from `backend` only.** `RUN_MIGRATIONS` is deliberately not set
-on `worker`, so two containers never migrate the same database at once. Keep it
-that way if you add more services.
+---
 
-**Redis is required in production.** The upstream `packages/api/medusa-config.ts`
-registers no Redis modules at all. `deploy/medusa-config.production.ts` adds them
-(cache, event bus, workflow engine, locking) whenever `REDIS_URL` is set, and
-compose always sets it. Without Redis, in-flight workflow state is lost on every
-restart and the server and worker cannot coordinate.
+## Reference
 
-**The worker is optional.** For a small marketplace you can delete the `worker`
-service and set `MEDUSA_WORKER_MODE: shared` on `backend`; one process then
-handles both HTTP and jobs.
+Everything below is background. You do not need it to deploy.
 
-**Database SSL.** Medusa turns database SSL on whenever `NODE_ENV=production`.
-The bundled Postgres serves no TLS, so its `DATABASE_URL` carries
-`?sslmode=disable` — without it the connection stalls until Medusa's 10s timeout
-and migrations fail with a misleading "incorrect database URL" error. If you
-point `DATABASE_URL` at a managed database instead, use `?sslmode=require`.
+### What is in this folder
 
-**Postgres backups are yours to configure.** The database lives in the
-`postgres-data` volume. Set up Dokploy's backup schedule, or point
-`DATABASE_URL` at a managed Postgres instead of the bundled service.
-
-**CORS.** The panels are served from the backend's own origin, so
-`MERCUR_BACKEND_URL` must appear in `ADMIN_CORS`, `VENDOR_CORS` and `AUTH_CORS`.
-Your storefront origin goes in `STORE_CORS` and `AUTH_CORS`.
-
-## Adding the storefront later
-
-The Next.js storefront is a separate deployable. Add it as its own Dokploy
-application (Nixpacks or a Dockerfile), point `MEDUSA_BACKEND_URL` at this
-backend, and create a publishable API key in the admin panel for
-`NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY`.
-
-## Testing the image locally
-
-```bash
-docker build -f deploy/Dockerfile --build-arg MERCUR_BACKEND_URL=http://localhost:9000 -t mercur-backend .
-```
-
-Note the context is the repo root, not `deploy/`. Or bring the whole stack up:
-
-```bash
-cp deploy/.env.example deploy/.env && docker compose -f deploy/docker-compose.yml --env-file deploy/.env up --build
-```
-
-(Local runs need `docker network create dokploy-network` once, since the compose
-file expects that network to already exist on a Dokploy host.)
-
-## Verified
-
-Built and exercised end to end before you got it, against Podman using the same
-command Dokploy runs (`docker compose -p <project> --env-file deploy/.env
--f ./deploy/docker-compose.yml up -d --build --remove-orphans`):
-
-| Test | Result |
+| File | Purpose |
 |---|---|
-| Missing `DOMAIN` stops the deploy before building | pass |
-| Traefik answers 404 when no router matches (the failure this setup prevents) | pass |
-| Image builds via Dokploy's exact command | pass |
-| Panels served at `/dashboard/` and `/seller/`, assets 200 | pass |
-| Origin baked into the panels matches `MERCUR_BACKEND_URL` | pass |
-| Worker starts only after the backend is healthy, and runs no migrations | pass |
-| `medusa user` creates both the `user` and `provider_identity` rows | pass |
-| Login returns a JWT; a wrong password returns 401 | pass |
-| Admin user survives `up -d --build`, same id, login still works | pass |
-| `RUN_SEED=true` with the marker present skips re-seeding | pass |
-| Backend restart returns to healthy and login still works | pass |
+| `Dockerfile` | Builds the backend image with both panels compiled in |
+| `entrypoint.sh` | Waits for Postgres, runs migrations, then starts Medusa |
+| `docker-compose.yml` | Postgres, Redis, backend and worker |
+| `medusa-config.production.ts` | Production config overlay — adds Redis and worker mode |
+| `.env.example` | The same variable block as Step 3 |
 
-One thing not verified locally: Traefik actually routing via these labels. The
-labels and network attachment were confirmed on the container, but the local
-Traefik could not read Podman's rootless socket, so it discovered nothing. The
-labels are proven by a real Dokploy deployment serving `/health`, `/dashboard/`
-and `/seller/`.
+The upstream project is left untouched. Every deployment file lives in this
+folder, so pulling a newer Mercur never conflicts with it. The production config
+is applied as an overlay *inside the image only*, leaving
+`packages/api/medusa-config.ts` exactly as Mercur ships it.
 
-## Upgrading Mercur
+### Before you go live
 
-Nothing here touches the upstream tree, so upgrades are a normal `git pull` (or a
-re-scaffold from a newer `bun create mercur-app`). The single thing to re-check
-afterwards is the config overlay:
+- **Back up Postgres.** Your data lives in the `postgres-data` volume. Use
+  Dokploy's backup schedule, or point `DATABASE_URL` at a managed database.
+- **Uploads are on a local volume** at `/app/static`. They survive redeploys but
+  cannot be shared across multiple backend replicas. Before scaling past one,
+  switch to the S3 provider in `medusa-config.production.ts`.
+- **Only `backend` runs migrations.** The worker deliberately does not, so two
+  containers never migrate at once. Preserve that if you add services.
+- **Redis is required.** Without it, in-flight workflow state is lost on every
+  restart and the backend and worker cannot coordinate. Compose always sets it.
+- **The worker is optional** for a small marketplace. Delete the `worker` service
+  and set `MEDUSA_WORKER_MODE: shared` on `backend` to run everything in one
+  process.
+- **Demo data.** Set `RUN_SEED=true` before the first deploy for a demo catalog
+  and seller (`seller@mercur.dev` / `supersecret`). It runs once; a marker on the
+  uploads volume stops it repeating.
+
+### Using a managed database
+
+Set `DATABASE_URL` yourself and the bundled Postgres is ignored. Always include
+an explicit `sslmode`, because Medusa turns database SSL on whenever
+`NODE_ENV=production`:
+
+```
+DATABASE_URL=postgres://user:password@host:5432/mercur?sslmode=require
+```
+
+The bundled Postgres serves no TLS, which is why its URL uses `sslmode=disable`.
+Omitting it makes migrations fail with a misleading "incorrect database URL".
+
+### Adding the storefront
+
+The Next.js storefront deploys separately. Add it as its own Dokploy application,
+point `MEDUSA_BACKEND_URL` at this backend, and create a publishable API key in
+the admin panel for `NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY`.
+
+### Running it locally
+
+```bash
+docker network create dokploy-network        # once
+cp deploy/.env.example deploy/.env           # then edit it
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env up --build
+```
+
+The build context is the repository root, not this folder.
+
+### Upgrading Mercur
+
+Upgrades are a normal `git pull`. The one thing to re-check afterwards is the
+config overlay:
 
 ```bash
 diff -u packages/api/medusa-config.ts deploy/medusa-config.production.ts
 ```
 
-The only differences should be the two blocks marked `OVERLAY:` — the Redis
-modules and `workerMode`. If upstream changed anything else in that file, copy
-the change across, then rebuild.
+The only differences should be the blocks marked `OVERLAY:` — Redis and
+`workerMode`. If Mercur changed anything else in that file, copy the change
+across and rebuild. If a future release adds Redis to the template itself, delete
+the overlay and the `COPY deploy/medusa-config.production.ts` line from the
+Dockerfile.
 
-If a future Mercur release adds Redis modules to the template itself, delete the
-overlay and the `COPY deploy/medusa-config.production.ts` line in
-`deploy/Dockerfile`.
+### What was tested
+
+Run against Podman using the same command Dokploy issues:
+
+| Test | Result |
+|---|---|
+| Missing `DOMAIN` stops the deploy before building | pass |
+| Router answers 404 when no rule matches | pass |
+| Image builds via Dokploy's exact command | pass |
+| Panels served at `/dashboard/` and `/seller/`, assets 200 | pass |
+| Origin compiled into the panels matches `MERCUR_BACKEND_URL` | pass |
+| Worker starts only after the backend is healthy, runs no migrations | pass |
+| `medusa user` writes both the `user` and `provider_identity` rows | pass |
+| Login returns a token; a wrong password returns 401 | pass |
+| Admin user survives a rebuild — same id, login still works | pass |
+| Seeding does not repeat once the marker exists | pass |
+| Backend restart returns to healthy, login still works | pass |
+
+Not verified locally: the router actually routing via the compose labels. The
+labels and network attachment were confirmed on the container, but the local
+Traefik could not read Podman's rootless socket and so discovered nothing. A real
+Dokploy deployment serving `/health`, `/dashboard/` and `/seller/` is the proof.
