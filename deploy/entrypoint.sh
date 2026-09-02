@@ -20,7 +20,8 @@ wait_for_postgres() {
   i=0
   until node -e "
 const { Client } = require('pg');
-const c = new Client({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : undefined });
+// SSL is decided by sslmode in DATABASE_URL, so the connection string is the single source of truth.
+const c = new Client({ connectionString: process.env.DATABASE_URL });
 c.connect().then(() => c.end()).then(() => process.exit(0)).catch(() => process.exit(1));
 " 2>/dev/null; do
     i=$((i + 1))
@@ -46,9 +47,16 @@ case "$ROLE" in
     else
       echo "[entrypoint] RUN_MIGRATIONS=false — skipping migrations."
     fi
-    if [ "$RUN_SEED" = "true" ]; then
+    # The marker lives on the uploads volume so it survives restarts and redeploys.
+    # Without it, leaving RUN_SEED=true would re-seed on every single restart.
+    SEED_MARKER=/app/static/.mercur-seeded
+    if [ "$RUN_SEED" = "true" ] && [ ! -f "$SEED_MARKER" ]; then
       echo "[entrypoint] seeding demo data..."
       npx medusa exec ./src/scripts/seed.js
+      touch "$SEED_MARKER"
+      echo "[entrypoint] seed complete; marked at $SEED_MARKER."
+    elif [ "$RUN_SEED" = "true" ]; then
+      echo "[entrypoint] RUN_SEED=true but $SEED_MARKER exists — already seeded, skipping."
     fi
     export MEDUSA_WORKER_MODE="${MEDUSA_WORKER_MODE:-shared}"
     echo "[entrypoint] starting Medusa (worker mode: $MEDUSA_WORKER_MODE)"

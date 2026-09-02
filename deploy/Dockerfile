@@ -136,7 +136,11 @@ USER node
 
 EXPOSE 9000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=5 \
+# start-period covers first-boot migrations, which take minutes on an empty
+# database. Failures inside it do not count, and the worker gates on this
+# healthcheck, so too short a window would block the worker rather than the
+# other way round.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=600s --retries=5 \
     CMD curl -fsS http://127.0.0.1:${PORT}/health || exit 1
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

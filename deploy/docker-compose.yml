@@ -7,8 +7,13 @@
 # into the Environment tab, then attach a domain to the `backend` service on
 # port 9000 (Domains tab).
 #
-# Note: `MERCUR_BACKEND_URL` is a BUILD argument — it is baked into the admin and
-# vendor panels. Changing it requires a rebuild, not just a restart.
+# Two variables decide whether this works at all:
+#   DOMAIN              the hostname Traefik routes (bare host, no scheme)
+#   MERCUR_BACKEND_URL  the origin baked into the panels at BUILD time
+# They must agree, scheme included. If the panels are built for
+# https://host but you open http://host, every API call fails in the browser
+# with "Failed to fetch". Changing MERCUR_BACKEND_URL requires a REBUILD,
+# not a restart.
 # ---------------------------------------------------------------------------
 
 services:
@@ -77,11 +82,41 @@ services:
       STOREFRONT_REVALIDATE_SECRET: ${STOREFRONT_REVALIDATE_SECRET:-}
     volumes:
       - uploads:/app/static
+    stop_grace_period: 30s
+    # Declared here, not left to the image's HEALTHCHECK: the OCI image format has
+    # no healthcheck field, so BuildKit silently drops the Dockerfile instruction
+    # depending on the builder and export format. `depends_on: service_healthy`
+    # below reads this one, so it must not depend on how the image was built.
+    # start_period covers first-boot migrations on an empty database.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 600s
     expose:
       - "9000"
     networks:
       - default
       - dokploy-network
+    # Dokploy's Traefik routes by container labels. Attaching to dokploy-network
+    # is necessary but NOT sufficient — without a router rule Traefik answers every
+    # request for this host with its own plain-text "404 page not found".
+    # DOMAIN must be the bare hostname, no scheme and no trailing slash.
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=dokploy-network"
+      - "traefik.http.services.${TRAEFIK_ROUTER:-mercur}.loadbalancer.server.port=9000"
+      - "traefik.http.routers.${TRAEFIK_ROUTER:-mercur}-web.rule=Host(`${DOMAIN:?set DOMAIN to the hostname Traefik should route, e.g. api-mercur.example.com}`)"
+      - "traefik.http.routers.${TRAEFIK_ROUTER:-mercur}-web.entrypoints=web"
+      - "traefik.http.routers.${TRAEFIK_ROUTER:-mercur}-web.service=${TRAEFIK_ROUTER:-mercur}"
+      # HTTPS. Harmless before DNS/certificates are ready — the web router keeps
+      # serving until the certificate is issued.
+      - "traefik.http.routers.${TRAEFIK_ROUTER:-mercur}-websecure.rule=Host(`${DOMAIN}`)"
+      - "traefik.http.routers.${TRAEFIK_ROUTER:-mercur}-websecure.entrypoints=websecure"
+      - "traefik.http.routers.${TRAEFIK_ROUTER:-mercur}-websecure.tls=true"
+      - "traefik.http.routers.${TRAEFIK_ROUTER:-mercur}-websecure.tls.certresolver=${TRAEFIK_CERTRESOLVER:-letsencrypt}"
+      - "traefik.http.routers.${TRAEFIK_ROUTER:-mercur}-websecure.service=${TRAEFIK_ROUTER:-mercur}"
 
   # Background jobs, scheduled jobs and workflow execution. Optional for a small
   # marketplace (set backend's MEDUSA_WORKER_MODE to `shared` and delete this
@@ -95,8 +130,11 @@ services:
     restart: unless-stopped
     command: ["worker"]
     depends_on:
+      # service_healthy, not service_started: `backend` owns migrations, and its
+      # healthcheck only passes once Medusa is serving — i.e. after they finished.
+      # Starting the worker earlier races it against an unmigrated schema.
       backend:
-        condition: service_started
+        condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
@@ -120,6 +158,7 @@ services:
       MERCUR_VENDOR_URL: ${MERCUR_VENDOR_URL:-${MERCUR_BACKEND_URL}/seller}
     volumes:
       - uploads:/app/static
+    stop_grace_period: 30s
 
 volumes:
   postgres-data:

@@ -66,15 +66,19 @@ restart, or the panels will keep calling the old origin from the browser.
 
 ## Step 4 — attach the domain
 
-In the service's **Domains** tab:
+Set `DOMAIN` in the environment to the bare hostname (no scheme, no trailing
+slash). The compose file turns it into Traefik router labels on the `backend`
+service, and attaches that service to the external `dokploy-network`.
 
-- **Service Name**: `backend`
-- **Port**: `9000`
-- **Host**: the hostname from `MERCUR_BACKEND_URL`
-- **HTTPS**: on, certificate provider Let's Encrypt
+**Both parts are required.** Being on `dokploy-network` only makes the container
+reachable; without a router rule Traefik has no route for the host and answers
+every request with its own plain-text `404 page not found`. If you see that,
+`DOMAIN` is unset or the labels did not apply — check `docker inspect` on the
+backend container for `traefik.http.routers.*`.
 
-The compose file already attaches `backend` to the external `dokploy-network`,
-which is what lets Traefik route to it.
+You can also add the domain in Dokploy's **Domains** tab (`backend`, port 9000).
+That is redundant with the labels but harmless — Traefik ends up with two routers
+pointing at the same service.
 
 ## Step 5 — first deploy
 
@@ -105,6 +109,28 @@ which owns the app.
 
 Then sign in at `https://your-domain/dashboard`. Sellers register and sign in at
 `https://your-domain/seller`.
+
+## Troubleshooting
+
+**Traefik's plain-text `404 page not found` on every path.** No router matches the
+host. `DOMAIN` is unset, does not match the hostname you are opening, or the
+stack was deployed before the Traefik labels existed. Redeploy with `DOMAIN` set.
+
+**The login page renders, then "Failed to fetch" on submit.** The panels call the
+origin baked in at build time, and it does not match the origin in your address
+bar — usually `https://` baked while you browse `http://`, or vice versa. Fix
+`MERCUR_BACKEND_URL` so the scheme and host match exactly, then **Rebuild**
+(a restart is not enough, the value is compiled into the JS bundle). Confirm what
+was baked with:
+
+```bash
+curl -s https://your-domain/dashboard/ | grep -o '/dashboard/assets/index-[^"]*\.js'
+curl -s https://your-domain/dashboard/assets/index-XXXX.js | grep -oE 'https?://[a-zA-Z0-9._:-]+' | sort -u
+```
+
+**Worker sits in `Created` and never starts.** It gates on `backend` reporting
+healthy. If the backend never becomes healthy, check its logs — on first boot
+migrations can take minutes, which is why `start_period` is 600s.
 
 ## Things worth knowing before you go live
 
