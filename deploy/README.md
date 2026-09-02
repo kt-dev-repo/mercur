@@ -94,8 +94,14 @@ From the service's **Terminal** (or `docker exec` on the host), on the `backend`
 container:
 
 ```bash
-npx medusa user -e you@example.com -p 'a-strong-password'
+cd /app && npx medusa user -e you@example.com -p 'a-strong-password'
 ```
+
+The `cd /app` is required. Some terminals (Dokploy's included) drop you in `/`,
+and `npx` resolves binaries from the current directory's `node_modules` — from
+`/` it fails with `npm error could not determine executable to run`. There is no
+`sudo` in the image and none is needed; it runs as the unprivileged `node` user,
+which owns the app.
 
 Then sign in at `https://your-domain/dashboard`. Sellers register and sign in at
 `https://your-domain/seller`.
@@ -169,6 +175,8 @@ This setup was built and run end to end before you got it:
 - `/dashboard/` and `/seller/` return 200 and their JS bundles load
 - `backend` starts in `server` mode, `worker` in `worker` mode, and the worker
   does not run migrations
+- `cd /app && npx medusa user ...` creates an admin, and that admin can then
+  authenticate against `POST /auth/user/emailpass`
 
 ## Upgrading Mercur
 
