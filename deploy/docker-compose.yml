@@ -1,0 +1,124 @@
+# ---------------------------------------------------------------------------
+# Mercur marketplace — Dokploy Compose stack
+#
+# In Dokploy: Project -> Create Service -> Compose, point it at this repo, set
+# "Compose Path" to ./deploy/docker-compose.yml, paste the variables from
+# deploy/.env.example
+# into the Environment tab, then attach a domain to the `backend` service on
+# port 9000 (Domains tab).
+#
+# Note: `MERCUR_BACKEND_URL` is a BUILD argument — it is baked into the admin and
+# vendor panels. Changing it requires a rebuild, not just a restart.
+# ---------------------------------------------------------------------------
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mercur}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-mercur}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mercur} -d ${POSTGRES_DB:-mercur}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        MERCUR_BACKEND_URL: ${MERCUR_BACKEND_URL:?set MERCUR_BACKEND_URL to your public https origin}
+    restart: unless-stopped
+    command: ["server"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 9000
+      # This container owns migrations; the worker below never runs them.
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
+      RUN_SEED: ${RUN_SEED:-false}
+      MEDUSA_WORKER_MODE: server
+      DATABASE_URL: postgres://${POSTGRES_USER:-mercur}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mercur}
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      COOKIE_SECRET: ${COOKIE_SECRET:?set COOKIE_SECRET}
+      STORE_CORS: ${STORE_CORS}
+      ADMIN_CORS: ${ADMIN_CORS}
+      VENDOR_CORS: ${VENDOR_CORS}
+      AUTH_CORS: ${AUTH_CORS}
+      FILE_BACKEND_URL: ${FILE_BACKEND_URL:-${MERCUR_BACKEND_URL}/static}
+      MERCUR_VENDOR_URL: ${MERCUR_VENDOR_URL:-${MERCUR_BACKEND_URL}/seller}
+      STOREFRONT_REVALIDATE_URL: ${STOREFRONT_REVALIDATE_URL:-}
+      STOREFRONT_REVALIDATE_SECRET: ${STOREFRONT_REVALIDATE_SECRET:-}
+    volumes:
+      - uploads:/app/static
+    expose:
+      - "9000"
+    networks:
+      - default
+      - dokploy-network
+
+  # Background jobs, scheduled jobs and workflow execution. Optional for a small
+  # marketplace (set backend's MEDUSA_WORKER_MODE to `shared` and delete this
+  # service), but recommended so a long-running job cannot stall HTTP responses.
+  worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        MERCUR_BACKEND_URL: ${MERCUR_BACKEND_URL}
+    restart: unless-stopped
+    command: ["worker"]
+    depends_on:
+      backend:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      MEDUSA_WORKER_MODE: worker
+      DATABASE_URL: postgres://${POSTGRES_USER:-mercur}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mercur}
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET}
+      COOKIE_SECRET: ${COOKIE_SECRET}
+      STORE_CORS: ${STORE_CORS}
+      ADMIN_CORS: ${ADMIN_CORS}
+      VENDOR_CORS: ${VENDOR_CORS}
+      AUTH_CORS: ${AUTH_CORS}
+      FILE_BACKEND_URL: ${FILE_BACKEND_URL:-${MERCUR_BACKEND_URL}/static}
+      MERCUR_VENDOR_URL: ${MERCUR_VENDOR_URL:-${MERCUR_BACKEND_URL}/seller}
+    volumes:
+      - uploads:/app/static
+
+volumes:
+  postgres-data:
+  redis-data:
+  uploads:
+
+networks:
+  # Dokploy's Traefik network — required for the domain you attach to `backend`.
+  dokploy-network:
+    external: true
