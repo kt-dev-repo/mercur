@@ -34,6 +34,23 @@ c.connect().then(() => c.end()).then(() => process.exit(0)).catch(() => process.
   echo "[entrypoint] Postgres is up."
 }
 
+# medusa-config.ts falls back to the literal "supersecret" when these are unset, so a
+# deploy that forgets them comes up looking healthy while signing every session token
+# with a value published in this repository. The check lives here rather than in the
+# config because `medusa build` loads that config at image-build time, when the runtime
+# secrets legitimately do not exist yet. docker-compose.yml also guards them with `:?`;
+# this covers every other way the image gets run.
+require_secrets() {
+  missing=""
+  [ -n "$JWT_SECRET" ] || missing="$missing JWT_SECRET"
+  [ -n "$COOKIE_SECRET" ] || missing="$missing COOKIE_SECRET"
+  if [ -n "$missing" ]; then
+    echo "[entrypoint] refusing to start: missing required secret(s):$missing" >&2
+    echo "[entrypoint] generate each separately with: openssl rand -base64 48" >&2
+    exit 1
+  fi
+}
+
 run_migrations() {
   echo "[entrypoint] running database migrations..."
   npx medusa db:migrate
@@ -41,6 +58,7 @@ run_migrations() {
 
 case "$ROLE" in
   server)
+    require_secrets
     wait_for_postgres
     if [ "$RUN_MIGRATIONS" != "false" ]; then
       run_migrations
@@ -64,6 +82,7 @@ case "$ROLE" in
     ;;
 
   worker)
+    require_secrets
     wait_for_postgres
     export MEDUSA_WORKER_MODE=worker
     echo "[entrypoint] starting Medusa worker"

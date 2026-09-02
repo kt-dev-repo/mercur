@@ -27,7 +27,7 @@ Admin pages are file-based:
 - use file path shape to control route path
 - export route config when the page should appear in navigation
 
-Use `templates/basic/apps/admin/src/README.md` as the starter routing reference.
+Use `apps/admin/src/README.md` as the starter routing reference.
 
 ## Which skill to use
 

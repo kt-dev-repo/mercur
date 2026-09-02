@@ -18,6 +18,12 @@ coverage
 # Turbo
 .turbo
 
+# Mercur route codegen output (regenerate with `npm run codegen`)
+.mercur/
+
+# Incremental tsc build info (tsconfig.base.json tsBuildInfoFile)
+.cache/
+
 # Vercel
 .vercel
 
