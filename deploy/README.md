@@ -152,6 +152,23 @@ curl -s https://your-domain/dashboard/ | grep -o '/dashboard/assets/index-[^"]*\
 curl -s https://your-domain/dashboard/assets/index-XXXX.js | grep -oE 'https?://[a-zA-Z0-9._:-]+' | sort -u
 ```
 
+**Login is rejected with `Invalid email or password`.** If `/health` returns 200
+and the panel loads, the stack is fine and this is a genuine credential
+rejection — most often because the database has no users at all. A fresh deploy
+creates none: nothing bootstraps an admin, and the seed does not either unless
+you set `RUN_SEED=true`. Check first:
+
+```bash
+docker exec $(docker ps -qf name=postgres) psql -U mercur -d mercur \
+  -c 'select id, email from "user";'
+```
+
+`(0 rows)` means no account was ever created — go back to
+[Create your admin user](#step-6--create-your-admin-user). Note that the account
+lives in two tables: `user` holds the identity and `provider_identity` holds the
+password. `medusa user` writes both; a `user` row with no matching
+`provider_identity` also produces this error.
+
 **Worker sits in `Created` and never starts.** It gates on `backend` reporting
 healthy. If the backend never becomes healthy, check its logs — on first boot
 migrations can take minutes, which is why `start_period` is 600s.
@@ -216,17 +233,29 @@ file expects that network to already exist on a Dokploy host.)
 
 ## Verified
 
-This setup was built and run end to end before you got it:
+Built and exercised end to end before you got it, against Podman using the same
+command Dokploy runs (`docker compose -p <project> --env-file deploy/.env
+-f ./deploy/docker-compose.yml up -d --build --remove-orphans`):
 
-- image builds clean, 811MB
-- both panels bundled into the artifact at `/dashboard` and `/seller`, with their
-  asset base paths validated by `bundle-dashboards.mjs` in production mode
-- `docker compose up` → migrations run, `GET /health` returns 200
-- `/dashboard/` and `/seller/` return 200 and their JS bundles load
-- `backend` starts in `server` mode, `worker` in `worker` mode, and the worker
-  does not run migrations
-- `cd /app && npx medusa user ...` creates an admin, and that admin can then
-  authenticate against `POST /auth/user/emailpass`
+| Test | Result |
+|---|---|
+| Missing `DOMAIN` stops the deploy before building | pass |
+| Traefik answers 404 when no router matches (the failure this setup prevents) | pass |
+| Image builds via Dokploy's exact command | pass |
+| Panels served at `/dashboard/` and `/seller/`, assets 200 | pass |
+| Origin baked into the panels matches `MERCUR_BACKEND_URL` | pass |
+| Worker starts only after the backend is healthy, and runs no migrations | pass |
+| `medusa user` creates both the `user` and `provider_identity` rows | pass |
+| Login returns a JWT; a wrong password returns 401 | pass |
+| Admin user survives `up -d --build`, same id, login still works | pass |
+| `RUN_SEED=true` with the marker present skips re-seeding | pass |
+| Backend restart returns to healthy and login still works | pass |
+
+One thing not verified locally: Traefik actually routing via these labels. The
+labels and network attachment were confirmed on the container, but the local
+Traefik could not read Podman's rootless socket, so it discovered nothing. The
+labels are proven by a real Dokploy deployment serving `/health`, `/dashboard/`
+and `/seller/`.
 
 ## Upgrading Mercur
 
