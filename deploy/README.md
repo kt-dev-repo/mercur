@@ -67,6 +67,8 @@ RUN_MIGRATIONS=true
 RUN_SEED=false
 
 INSECURE_COOKIES=true
+
+FILE_STORAGE=local
 ```
 
 Generate `JWT_SECRET` and `COOKIE_SECRET` by running this twice, using a
@@ -376,9 +378,11 @@ is applied as an overlay *inside the image only*, leaving
   Compose project, so renaming or recreating the Dokploy service leaves your
   data behind in an orphaned volume. See [Surviving a service
   rename](#surviving-a-service-rename).
-- **Uploads are on a local volume** at `/app/static`. They survive redeploys but
-  cannot be shared across multiple backend replicas. Before scaling past one,
-  switch to the S3 provider in `medusa-config.production.ts`.
+- **Uploads default to a local volume** at `/app/static`. They survive redeploys,
+  but the database backups do not cover them and they cannot be shared across
+  multiple backend replicas. Set `FILE_STORAGE=s3` to put them in RustFS instead —
+  see [Storing uploads in S3](#storing-uploads-in-s3-rustfs). Required before
+  scaling past one backend.
 - **Only `backend` runs migrations.** The worker deliberately does not, so two
   containers never migrate at once. Preserve that if you add services.
 - **Upgrades keep your data.** A new image is deployed over the same volumes and
@@ -416,6 +420,13 @@ move to `https` and when you add a storefront origin.
 
 `INSECURE_COOKIES` is covered in Step 3 and Step 6. It only ever needs to be true
 while the site is served over plain http.
+
+`FILE_STORAGE` decides where uploaded images and videos go — `local` (the default,
+the `uploads` volume) or `s3`. The `S3_FILE_*` settings that go with it, and the
+`COMPOSE_PROFILES=backup` switch and its `S3_*` settings, are covered in [Storing
+uploads in S3](#storing-uploads-in-s3-rustfs) and [Backing up to
+S3](#backing-up-to-s3-rustfs). `S3_ENDPOINT` and the credentials are shared
+between the two — one RustFS, two buckets.
 
 `JWT_SECRET` and `COOKIE_SECRET` are checked twice — Compose refuses to start
 without them, and `entrypoint.sh` refuses again for any other way the image is run.
@@ -836,6 +847,18 @@ Run against Podman using the same command Dokploy issues:
 | Region, tax-region and category guards skip existing rows without duplicating | pass |
 | A seed that fails midway leaves the site up and serving (0 restarts) | pass |
 | A different image deployed over existing volumes keeps every row and upload | pass |
+| A stock `.env.example`, filled in and nothing else, deploys and signs in | pass |
+| `FILE_STORAGE` unset or `local` stores uploads on the volume, even with a bucket set | pass |
+| `FILE_STORAGE=s3` missing a bucket, URL or credentials refuses to boot, naming each | pass |
+| `FILE_STORAGE=nonsense` refuses to boot rather than falling back to local | pass |
+| `FILE_STORAGE=s3` uploads images and video to RustFS, fetchable with no credentials | pass |
+| Files uploaded before the switch keep serving from `/static` afterwards | pass |
+| `migrate-uploads` dry run reports counts and changes nothing | pass |
+| `migrate-uploads --apply` rewrites only this deployment's own files | pass |
+| The seeded jsdelivr catalogue URLs survive the migration untouched | pass |
+| A private media bucket aborts the migration with the database unchanged | pass |
+| Re-running the migration finds nothing to do | pass |
+| Both scripts are shellcheck-clean | pass |
 | Migrations run unattended without stopping on a link-sync prompt | pass |
 | Backup sidecar is absent unless `COMPOSE_PROFILES=backup` is set | pass |
 | `backup check` reports a missing bucket instead of failing obscurely | pass |
