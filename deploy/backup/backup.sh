@@ -7,6 +7,11 @@
 #   backup.sh list              list the backups currently in the bucket
 #   backup.sh restore <name>    restore one backup by file name (asks nothing — be sure)
 #   backup.sh check             verify the configuration and the bucket, take nothing
+#   backup.sh migrate-uploads   move files already on the uploads volume into the media
+#                               bucket and repoint the database at them. Reports only,
+#                               unless you add --apply. Add --skip-public-check only if
+#                               the bucket's public URL is unreachable from this
+#                               container but verified working from a browser.
 #
 # Everything is driven by environment variables; see deploy/.env.example.
 # ---------------------------------------------------------------------------
@@ -138,7 +143,128 @@ case "$MODE" in
     done
     ;;
 
+  migrate-uploads)
+    # Moves what the LOCAL provider wrote into the bucket the S3 provider reads,
+    # then repoints the database. Only needed once, when switching FILE_STORAGE
+    # from local to s3 — new uploads already go straight to the bucket.
+    require_database_url
+    [ -n "$S3_FILE_BUCKET" ] || die "S3_FILE_BUCKET is not set — nothing to migrate into."
+    [ -n "$S3_FILE_PUBLIC_URL" ] || die "S3_FILE_PUBLIC_URL is not set — the rewritten URLs would be wrong."
+    [ -d /uploads ] || die "/uploads is not mounted; the uploads volume must be attached to this container."
+
+    APPLY=false
+    SKIP_CHECK=false
+    for _arg in "$@"; do
+      [ "$_arg" = "--apply" ] && APPLY=true
+      [ "$_arg" = "--skip-public-check" ] && SKIP_CHECK=true
+    done
+
+    configure_rclone
+    MEDIA="store:${S3_FILE_BUCKET}/${S3_FILE_PREFIX}"
+    NEW_BASE="${S3_FILE_PUBLIC_URL}/${S3_FILE_PREFIX}"
+
+    # The rewrite below keys off the file names actually present on the volume, so
+    # a public URL that itself ends in one of them can never be re-rewritten. The
+    # only genuinely unsafe shape is an empty base.
+    [ -n "$NEW_BASE" ] || die "computed an empty destination URL."
+
+    # The set of files to migrate — and, crucially, the ONLY rows that may be
+    # rewritten. Matching on "/static/" alone is not safe: Mercur's own demo seed
+    # stores catalogue images as
+    # https://cdn.jsdelivr.net/gh/mercurjs/mercur@main/static/<name>.png, and a
+    # naive rewrite silently repoints every one of them at a bucket that has never
+    # held those files. Restricting to file names present on the volume keeps the
+    # migration to files this deployment actually owns.
+    find /uploads -type f ! -name '.*' | sed 's|.*/||' > /tmp/upload-names.txt
+    FILE_COUNT=$(wc -l < /tmp/upload-names.txt | tr -d ' ')
+    log "files on the uploads volume: ${FILE_COUNT}"
+
+    if [ "$FILE_COUNT" -eq 0 ]; then
+      log "nothing to migrate."
+      exit 0
+    fi
+
+    # Every column that can hold an uploaded-file URL, confirmed against the live
+    # schema. Deliberately excludes cart_line_item/order_line_item thumbnails:
+    # those are historical snapshots of past orders, not live catalogue data.
+    TARGETS="image:url media_image:url product:thumbnail product_variant:thumbnail inventory_item:thumbnail seller:logo seller:banner user:avatar_url order_claim_item_image:url"
+
+    build_sql() {
+      _verb="$1"   # count | update
+      echo "create temp table migrated_files(name text primary key);"
+      echo "\\copy migrated_files(name) from '/tmp/upload-names.txt'"
+      for t in $TARGETS; do
+        _tbl=${t%%:*}; _col=${t##*:}
+        _base="regexp_replace(regexp_replace(\"$_col\", '[?#].*$', ''), '^.*/', '')"
+        # BOTH conditions. The path check alone is unsafe (Mercur's demo seed
+        # stores catalogue images at cdn.jsdelivr.net/.../static/<name>.png, which
+        # a naive rewrite would repoint at a bucket that never held them). The
+        # file-name check alone is unsafe too: an unrelated URL that happens to
+        # end in the same file name would be clobbered. Requiring both also makes
+        # re-running a clean no-op, since rewritten rows no longer match.
+        _where="\"$_col\" like '%/static/%' and $_base in (select name from migrated_files)"
+        if [ "$_verb" = "count" ]; then
+          echo "select '${_tbl}.${_col}', count(*) from \"$_tbl\" where $_where;"
+        else
+          echo "update \"$_tbl\" set \"$_col\" = '${NEW_BASE}' || $_base where $_where;"
+        fi
+      done
+    }
+
+    log "rows referencing those files:"
+    build_sql count | psql -d "$DATABASE_URL" -tA -v ON_ERROR_STOP=1 2>/dev/null \
+      | awk -F'|' '$2 > 0 { printf "[backup]   %s: %s\n", $1, $2; t+=$2 } END { printf "[backup] total rows to rewrite: %d\n", t }'
+
+    if [ "$APPLY" != "true" ]; then
+      log "DRY RUN — nothing copied, nothing changed."
+      log "Re-run with --apply to copy the files and rewrite the URLs."
+      exit 0
+    fi
+
+    # A dump first, so the URL rewrite is one `restore` away from being undone.
+    log "taking a safety backup before changing anything..."
+    take_backup
+
+    log "copying ${FILE_COUNT} file(s) to ${MEDIA}"
+    rclone copy /uploads "$MEDIA" --progress || die "copy failed — the database was not touched."
+
+    # Prove the bucket actually serves these publicly BEFORE repointing anything.
+    # A private bucket rewrites cleanly and then shows broken images everywhere.
+    SAMPLE=$(head -1 /tmp/upload-names.txt)
+    if [ -n "$SAMPLE" ]; then
+      SAMPLE_URL="${NEW_BASE}${SAMPLE}"
+      log "checking the copy is publicly readable: ${SAMPLE_URL}"
+      # Anchor on the status line only. busybox wget also echoes the status inside
+      # its own "wget: server returned error: HTTP/1.1 403" message, and matching
+      # that too yields "server" where the code should be.
+      CODE=$(wget -q -S -O /dev/null "$SAMPLE_URL" 2>&1 | awk '/^[ \t]*HTTP\//{print $2; exit}')
+      if [ "$CODE" = "200" ]; then
+        log "public read confirmed."
+      elif [ -n "$CODE" ]; then
+        # The server answered and refused. That is a real misconfiguration.
+        die "the bucket is not publicly readable (HTTP ${CODE} for ${SAMPLE_URL}). Files are copied and the database is UNCHANGED — grant anonymous read on the bucket and re-run."
+      elif [ "$SKIP_CHECK" = "true" ]; then
+        log "WARNING: could not reach ${SAMPLE_URL} from this container; --skip-public-check given, continuing."
+      else
+        # No answer at all: usually the public URL is not resolvable from inside
+        # the container — split-horizon DNS, or a CDN in front of the bucket.
+        # That is not proof the bucket is private, so say which case this is
+        # rather than reporting a permissions problem that may not exist.
+        die "could not reach ${SAMPLE_URL} from inside this container (no HTTP response), so the bucket could not be verified. Files are copied and the database is UNCHANGED. Check that URL from a browser: if it loads, re-run with --skip-public-check; if it does not, fix the bucket policy first."
+      fi
+    fi
+
+    # One transaction: either every table is repointed or none is.
+    log "rewriting URLs..."
+    { echo "begin;"; build_sql update; echo "commit;"; } \
+      | psql -d "$DATABASE_URL" -v ON_ERROR_STOP=1 >/dev/null \
+      || die "URL rewrite failed and was rolled back. Files are in the bucket; the database is unchanged."
+
+    log "migration complete. The originals are still on the uploads volume —"
+    log "leave them until you have confirmed images render, then they can go."
+    ;;
+
   *)
-    die "unknown mode '$MODE' (expected: loop, once, list, restore, check)"
+    die "unknown mode '$MODE' (expected: loop, once, list, restore, check, migrate-uploads)"
     ;;
 esac

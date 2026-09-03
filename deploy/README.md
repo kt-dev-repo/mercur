@@ -359,7 +359,7 @@ Everything below is background. You do not need it to deploy.
 | `medusa-config.production.ts` | Production config overlay — adds Redis and worker mode |
 | `prepare-artifact.mjs` | Build-time fixups so the runtime image installs cleanly |
 | `.env.example` | The Step 3 block, plus the optional settings listed below |
-| `backup/` | The S3 backup sidecar — `pg_dump` to RustFS/S3 on a schedule |
+| `backup/` | The S3 sidecar — scheduled `pg_dump` to RustFS/S3, and the uploads migration |
 
 The upstream project is left untouched. Every deployment file lives in this
 folder, so pulling a newer Mercur never conflicts with it. The production config
@@ -526,10 +526,107 @@ Notes worth having:
   plausible-looking but truncated file.
 - If S3 is unreachable the loop logs the failure and retries at the next
   interval; it does not exit and does not restart-loop.
-- **Backups do not cover uploaded files.** Those live on the `uploads` volume.
-  To put them in object storage too, switch the file module in
-  `deploy/medusa-config.production.ts` to the S3 provider — the same RustFS
-  bucket works.
+- **Backups do not cover uploaded files.** Those live on the `uploads` volume
+  unless you set `FILE_STORAGE=s3` — see [Storing uploads in
+  S3](#storing-uploads-in-s3-rustfs). Use a **separate bucket** from this one:
+  media has to be publicly readable, database dumps must not be.
+
+### Storing uploads in S3 (RustFS)
+
+Product images and videos, seller logos and banners all go through Medusa's file
+module. By default they land on the `uploads` volume inside the stack — which
+means **nothing backs them up**, and they cannot be shared between two backend
+replicas. Pointing them at RustFS fixes both.
+
+One setting decides it:
+
+```
+FILE_STORAGE=local     # the uploads volume (default)
+FILE_STORAGE=s3        # RustFS / AWS S3 / R2 / B2 / Spaces
+```
+
+It applies to the whole deployment. Medusa allows exactly **one** file provider —
+registering two makes the file module refuse to start — so this is a per-deploy
+choice, not a per-upload one.
+
+**1. Create a second bucket** (e.g. `mercur-media`) and grant it **anonymous
+read**. It must be a *different* bucket from your backups: this one is world
+readable, and your database dumps must never be.
+
+**2. Add the settings.** The endpoint and credentials are shared with the backup
+sidecar — one RustFS, two buckets:
+
+```
+FILE_STORAGE=s3
+S3_FILE_BUCKET=mercur-media
+S3_FILE_PUBLIC_URL=https://rustfs.example.com/mercur-media
+```
+
+`S3_FILE_PUBLIC_URL` is the address that serves the bucket **to a browser**. Every
+image URL is built from it, so getting it wrong is quiet and expensive: uploads
+report success and the whole catalogue renders broken. If it is missing entirely
+the backend refuses to start rather than let that happen.
+
+**3. Rebuild** — `medusa-config.production.ts` is compiled into the image, so a
+restart is not enough.
+
+**4. Check it.** Upload an image in the admin panel, then confirm the URL it was
+given is fetchable with no credentials:
+
+```bash
+curl -I https://rustfs.example.com/mercur-media/some-image-01H.png
+```
+
+A `403` here means the bucket is not actually public — the upload worked, the URL
+is stored, and every image will render broken until you fix the bucket policy.
+
+#### Moving the files you already have
+
+Switching only redirects *new* uploads. Everything uploaded before it keeps
+serving from `/static`, which is why the `uploads` volume stays mounted. That is
+a perfectly stable place to stop — storage is simply mixed.
+
+To move the old files across as well:
+
+```bash
+# Report what would change. Copies nothing, changes nothing.
+docker compose -p YOUR-PROJECT -f deploy/docker-compose.yml run --rm backup migrate-uploads
+
+# Do it.
+docker compose -p YOUR-PROJECT -f deploy/docker-compose.yml run --rm backup migrate-uploads --apply
+```
+
+What `--apply` does, in order:
+
+1. takes a database backup, so the rewrite is one `restore` away from undone;
+2. copies the files into the media bucket — the volume is mounted **read-only**,
+   so the originals cannot be damaged;
+3. fetches one of the copied files over plain HTTP and **stops if it is not
+   publicly readable**, before touching a single row;
+4. rewrites the stored URLs in one transaction across `image`, `media_image`,
+   `product`, `product_variant`, `inventory_item`, `seller` (logo and banner),
+   `user` and `order_claim_item_image`.
+
+URLs are rewritten by file name, not by string-replacing the old host, so it
+still works if your domain or scheme changed since those files were uploaded, and
+running it twice is harmless.
+
+Historical order snapshots (`cart_line_item.thumbnail`,
+`order_line_item.thumbnail`) are deliberately left alone — they are a record of
+what a past order looked like, not live catalogue data.
+
+The originals stay on the volume afterwards. Leave them until you have clicked
+through the panel and confirmed images render; only then is it safe to drop the
+volume.
+
+#### Two things to know
+
+- **Deleting an old file after switching does not remove it from disk.** The
+  delete is routed through the new provider, which does not have that key. The
+  database row goes; the file is orphaned. Migrating first avoids this.
+- **Videos work.** There is no mime-type restriction anywhere in the backend
+  upload path — whatever the panel sends is stored. Any limit on *choosing* a
+  video is in the panel's file picker, not here.
 
 ### Rolling back a deployment
 
