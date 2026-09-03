@@ -45,6 +45,10 @@ services:
       retries: 10
 
   backend:
+    # Named so `worker` can reuse the exact same image. Both services used to carry
+    # their own identical `build:` block, which made Compose build and export the
+    # image twice on every single deploy.
+    image: ${IMAGE_NAME:-mercur-backend}:latest
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -126,11 +130,9 @@ services:
   # marketplace (set backend's MEDUSA_WORKER_MODE to `shared` and delete this
   # service), but recommended so a long-running job cannot stall HTTP responses.
   worker:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
-      args:
-        MERCUR_BACKEND_URL: ${MERCUR_BACKEND_URL}
+    # Same image as `backend` (built there), different entrypoint role. No `build:`
+    # block on purpose — see the comment on backend's `image:`.
+    image: ${IMAGE_NAME:-mercur-backend}:latest
     restart: unless-stopped
     command: ["worker"]
     depends_on:

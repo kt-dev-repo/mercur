@@ -5,11 +5,32 @@
 #                             + background jobs. This is the default.
 #   entrypoint.sh worker   -> skips migrations, runs background jobs only.
 #   entrypoint.sh migrate  -> runs migrations and exits.
-#   entrypoint.sh seed     -> runs the demo seed and exits.
+#   entrypoint.sh seed     -> runs the demo seed and exits. A no-op on a seeded database.
 #   entrypoint.sh <cmd...> -> runs an arbitrary command (e.g. `npx medusa user -e ... -p ...`).
 set -e
 
 ROLE="${1:-server}"
+
+# A password containing "/", "+" or "=" — exactly what `openssl rand -base64` emits —
+# is not URL-safe, and docker-compose.yml interpolates POSTGRES_PASSWORD into
+# DATABASE_URL raw. A "/" either makes the URL unparseable or silently reinterprets
+# the host, and the only symptom is a connection that never succeeds. Say so instead.
+check_database_url() {
+  [ -n "$DATABASE_URL" ] || return 0
+  # Two failure shapes, both from an unescaped "/" in the password: one throws on
+  # parse, the other parses "wrong" — postgres://mercur:/pw@host/db reads the host
+  # as "mercur" and swallows the rest into the path. Hence the shape check as well.
+  node -e "
+const u = new URL(process.env.DATABASE_URL);
+const ok = /^postgres(ql)?:\$/.test(u.protocol) && u.hostname && /^\/[^/]+\$/.test(u.pathname);
+process.exit(ok ? 0 : 1);
+" 2>/dev/null && return 0
+  echo "[entrypoint] refusing to start: DATABASE_URL is not a usable postgres URL." >&2
+  echo "[entrypoint] The usual cause is an unescaped character in the password —" >&2
+  echo "[entrypoint] '/', '+' and '=' must be percent-encoded (%2F, %2B, %3D)." >&2
+  echo "[entrypoint] Generate a URL-safe password instead: openssl rand -hex 32" >&2
+  exit 1
+}
 
 wait_for_postgres() {
   [ -n "$DATABASE_URL" ] || return 0
@@ -59,22 +80,30 @@ run_migrations() {
 case "$ROLE" in
   server)
     require_secrets
+    check_database_url
     wait_for_postgres
     if [ "$RUN_MIGRATIONS" != "false" ]; then
       run_migrations
     else
       echo "[entrypoint] RUN_MIGRATIONS=false — skipping migrations."
     fi
-    # The marker lives on the uploads volume so it survives restarts and redeploys.
-    # Without it, leaving RUN_SEED=true would re-seed on every single restart.
-    SEED_MARKER=/app/static/.mercur-seeded
-    if [ "$RUN_SEED" = "true" ] && [ ! -f "$SEED_MARKER" ]; then
-      echo "[entrypoint] seeding demo data..."
-      npx medusa exec ./src/scripts/seed.js
-      touch "$SEED_MARKER"
-      echo "[entrypoint] seed complete; marked at $SEED_MARKER."
-    elif [ "$RUN_SEED" = "true" ]; then
-      echo "[entrypoint] RUN_SEED=true but $SEED_MARKER exists — already seeded, skipping."
+    # No marker file. This used to be /app/static/.mercur-seeded on the uploads
+    # volume — a flag for the state of a *different* volume, which broke both ways:
+    # losing the database but keeping uploads left the marketplace permanently empty
+    # behind a green healthcheck, and losing uploads but keeping the database re-ran
+    # the seed over live data. The seed script now decides for itself by looking at
+    # the database, so the answer can never disagree with the data.
+    if [ "$RUN_SEED" = "true" ]; then
+      echo "[entrypoint] seeding demo data (a no-op if this marketplace is already seeded)..."
+      if npx medusa exec ./src/scripts/seed.js; then
+        echo "[entrypoint] seed step finished."
+      else
+        # Demo data is optional; the marketplace is not. Exiting here would restart
+        # the container, retry the same failing seed and exit again — an unreachable
+        # site instead of a running one missing its demo catalog.
+        echo "[entrypoint] WARNING: seeding failed. Starting the server anyway." >&2
+        echo "[entrypoint] Re-run it later with: npx medusa exec ./src/scripts/seed.js" >&2
+      fi
     fi
     export MEDUSA_WORKER_MODE="${MEDUSA_WORKER_MODE:-shared}"
     echo "[entrypoint] starting Medusa (worker mode: $MEDUSA_WORKER_MODE)"
@@ -83,6 +112,7 @@ case "$ROLE" in
 
   worker)
     require_secrets
+    check_database_url
     wait_for_postgres
     export MEDUSA_WORKER_MODE=worker
     echo "[entrypoint] starting Medusa worker"
@@ -90,11 +120,13 @@ case "$ROLE" in
     ;;
 
   migrate)
+    check_database_url
     wait_for_postgres
     run_migrations
     ;;
 
   seed)
+    check_database_url
     wait_for_postgres
     exec npx medusa exec ./src/scripts/seed.js
     ;;

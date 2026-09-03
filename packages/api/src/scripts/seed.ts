@@ -203,6 +203,15 @@ const seedCatalog: SeedCatalogItem[] = [
   },
 ];
 
+const SELLER_PASSWORD = "supersecret";
+const SELLER_CONFIGS = [
+  { name: "Sole Society", email: "seller@mercur.dev", first_name: "Demo", last_name: "Seller", city: "Berlin", country_code: "DE", address_1: "Alexanderplatz 1" },
+  { name: "Kickz Corner", email: "kickz@mercur.dev", first_name: "Kai", last_name: "Corner", city: "Amsterdam", country_code: "NL", address_1: "Damrak 12" },
+  { name: "Trailhead Outfitters", email: "trailhead@mercur.dev", first_name: "Tara", last_name: "Head", city: "Munich", country_code: "DE", address_1: "Marienplatz 3" },
+];
+// Presence of this seller is what marks the database as already seeded.
+const PRIMARY_SELLER_EMAIL = SELLER_CONFIGS[0].email;
+
 const updateStoreCurrencies = createWorkflow(
   "update-store-currencies",
   (input: {
@@ -240,6 +249,22 @@ export default async function seedDemoData({ container }: ExecArgs) {
 
   const countries = ["gb", "de", "dk", "se", "fr", "es", "it"];
 
+  // The seeded-already check has to come FIRST, before anything writes. It used to
+  // sit further down, just above seller creation, which meant a re-run still rewrote
+  // the store's name and currencies on the way there — silently discarding whatever
+  // the operator had configured. Nothing below this line runs on a seeded database.
+  const { data: alreadySeeded } = await query.graph({
+    entity: "seller",
+    fields: ["id"],
+    filters: { email: PRIMARY_SELLER_EMAIL },
+  });
+  if (alreadySeeded[0]) {
+    logger.info(
+      `Demo seller ${PRIMARY_SELLER_EMAIL} already exists — this marketplace is seeded. Nothing to do.`
+    );
+    return;
+  }
+
   logger.info("Seeding store data...");
   const [store] = await storeModuleService.listStores();
   if (!store) {
@@ -266,26 +291,57 @@ export default async function seedDemoData({ container }: ExecArgs) {
     defaultSalesChannel = salesChannelResult;
   }
 
+  // `updateStoresStep` REPLACES supported_currencies wholesale, so this has to send
+  // the currencies the store already has alongside the demo ones. Sending only
+  // eur/usd deletes every other currency the operator configured.
+  const { data: storeRows } = await query.graph({
+    entity: "store",
+    fields: [
+      "id",
+      "name",
+      "supported_currencies.currency_code",
+      "supported_currencies.is_default",
+    ],
+    filters: { id: store.id },
+  });
+  const existingCurrencies = (storeRows[0]?.supported_currencies ?? []) as {
+    currency_code: string;
+    is_default?: boolean;
+  }[];
+  const hasDefaultCurrency = existingCurrencies.some((c) => c.is_default);
+  const mergedCurrencies = [
+    ...existingCurrencies.map((c) => ({
+      currency_code: c.currency_code,
+      is_default: Boolean(c.is_default),
+    })),
+    ...["eur", "usd"]
+      .filter(
+        (code) => !existingCurrencies.some((c) => c.currency_code === code)
+      )
+      // Only claim the default slot when the store has not nominated one.
+      .map((code) => ({
+        currency_code: code,
+        is_default: code === "eur" && !hasDefaultCurrency,
+      })),
+  ];
+
   await updateStoreCurrencies(container).run({
     input: {
       store_id: store.id,
-      supported_currencies: [
-        {
-          currency_code: "eur",
-          is_default: true,
-        },
-        {
-          currency_code: "usd",
-        },
-      ],
+      supported_currencies: mergedCurrencies,
     },
   });
 
+  // Medusa's migrations create the store as "Medusa Store". Rename only that, so a
+  // marketplace the operator has already named keeps its name.
+  const storeName = storeRows[0]?.name as string | undefined;
   await updateStoresWorkflow(container).run({
     input: {
       selector: { id: store.id },
       update: {
-        name: 'Mercur Marketplace',
+        ...(storeName && storeName !== "Medusa Store"
+          ? {}
+          : { name: "Mercur Marketplace" }),
         default_sales_channel_id: defaultSalesChannel[0].id,
       },
     },
@@ -422,9 +478,14 @@ export default async function seedDemoData({ container }: ExecArgs) {
   const parentNames = Object.keys(CATEGORY_TREE);
   const childNames = Object.values(CATEGORY_TREE).flat();
 
-  const existingCats = await productModule.listProductCategories({
-    name: [...parentNames, ...childNames],
-  });
+  // `select` is required: the product module returns id-only rows otherwise, so every
+  // `c.name` below came back undefined, `catByName` never matched, and the re-run
+  // tried to recreate all five departments — dying on "Product category with handle:
+  // sandals, already exists" and taking the container down with it.
+  const existingCats = await productModule.listProductCategories(
+    { name: [...parentNames, ...childNames] },
+    { select: ["id", "name"] }
+  );
   const catByName = new Map(existingCats.map((c) => [c.name, c]));
 
   const missingParents = parentNames.filter((name) => !catByName.has(name));
@@ -599,34 +660,12 @@ export default async function seedDemoData({ container }: ExecArgs) {
 
   logger.info("Finished seeding global product attributes.");
 
-  const SELLER_PASSWORD = "supersecret";
-  const SELLER_CONFIGS = [
-    { name: "Sole Society", email: "seller@mercur.dev", first_name: "Demo", last_name: "Seller", city: "Berlin", country_code: "DE", address_1: "Alexanderplatz 1" },
-    { name: "Kickz Corner", email: "kickz@mercur.dev", first_name: "Kai", last_name: "Corner", city: "Amsterdam", country_code: "NL", address_1: "Damrak 12" },
-    { name: "Trailhead Outfitters", email: "trailhead@mercur.dev", first_name: "Tara", last_name: "Head", city: "Munich", country_code: "DE", address_1: "Marienplatz 3" },
-  ];
-  const PRIMARY_SELLER_EMAIL = SELLER_CONFIGS[0].email;
-
   // DiceBear renders a crisp initials avatar per seller name; Picsum returns a
   // deterministic photo for the same seed, so re-seeding is stable.
   const sellerLogo = (name: string) =>
     `https://api.dicebear.com/9.x/initials/svg?seed=${encodeURIComponent(name)}`;
   const sellerBanner = (name: string) =>
     `https://picsum.photos/seed/${toHandle(name)}/1200/320`;
-
-  const { data: existingSellers } = await query.graph({
-    entity: "seller",
-    fields: ["id"],
-    filters: { email: PRIMARY_SELLER_EMAIL },
-  });
-
-  if (existingSellers[0]) {
-    logger.info(
-      "Demo sellers already exist, skipping seller, product and offer seeding."
-    );
-    logger.info("Finished seeding.");
-    return;
-  }
 
   const authModuleService = container.resolve(Modules.AUTH);
 

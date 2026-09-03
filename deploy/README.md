@@ -67,14 +67,28 @@ RUN_MIGRATIONS=true
 RUN_SEED=false
 ```
 
-Generate the three secrets by running this three times, using a different result
-for each:
+Generate `JWT_SECRET` and `COOKIE_SECRET` by running this twice, using a
+different result for each:
 
 ```bash
 openssl rand -base64 48
 ```
 
-Two warnings worth reading before you save.
+Generate `POSTGRES_PASSWORD` with **hex, not base64**:
+
+```bash
+openssl rand -hex 32
+```
+
+Three warnings worth reading before you save.
+
+**Do not use `openssl rand -base64` for `POSTGRES_PASSWORD`.** It emits `/`, `+`
+and `=`, and this password gets interpolated straight into a `postgres://…`
+connection URL. A `/` in the password makes that URL unparseable — the backend
+never connects, retries for two minutes and exits, and nothing in the error
+mentions the password. Roughly two out of three base64 passwords contain one. If
+you already have such a password and want to keep it, percent-encode it in a
+`DATABASE_URL` you set yourself (`/` → `%2F`, `+` → `%2B`, `=` → `%3D`).
 
 **Set `POSTGRES_PASSWORD` once and never change it.** Postgres writes it into the
 database on first start. Changing it later does not update the database, it just
@@ -206,6 +220,82 @@ An account spans two tables: `user` holds the identity, `provider_identity` hold
 the password. `medusa user` writes both. A `user` row without a matching
 `provider_identity` gives this same error.
 
+### The backend never starts: "DATABASE_URL is not a usable postgres URL"
+
+Your `POSTGRES_PASSWORD` contains a character that is not URL-safe — almost
+always a `/` from `openssl rand -base64`. Compose builds `DATABASE_URL` by
+pasting the password into a `postgres://…` string, and a `/` breaks it.
+
+This is a first-deploy problem, so nothing is lost by fixing it properly:
+generate a new password with `openssl rand -hex 32`, update `POSTGRES_PASSWORD`
+in the Environment tab, delete the `postgres-data` volume (it was initialised
+with the old password) and deploy again.
+
+If the database already holds data you need, set `DATABASE_URL` yourself instead
+and percent-encode the password there: `/` → `%2F`, `+` → `%2B`, `=` → `%3D`.
+
+### After a redeploy the marketplace is empty — no currencies, regions or sellers
+
+A normal redeploy does not touch your data: the database lives in the
+`postgres-data` volume, which survives `down`/`up` and rebuilds. If everything is
+gone, the volume itself is gone. That happens when the Compose project is deleted
+and recreated, when the project name changes (Dokploy derives volume names from
+it), or after a `docker system prune --volumes` on the host.
+
+Check whether the volume still holds data:
+
+```bash
+docker exec $(docker ps -qf name=postgres) psql -U mercur -d mercur \
+  -c 'select name from store;' -c 'select count(*) from seller;'
+```
+
+A store named `Medusa Store` and zero sellers means a fresh, empty database — the
+volume was recreated. Restore from a backup, or start over. **Take Postgres
+backups before you rely on this stack**; Dokploy can schedule them.
+
+### After a redeploy a currency or the store name reverted
+
+Older versions of this stack rewrote the store's name and currency list every
+time the seed ran, and tracked "already seeded" with a marker file on the
+*uploads* volume — a different volume from the data it was guarding. If the
+uploads volume was recreated the seed ran again over live data and reset those
+fields; if the database volume was recreated instead, the marker survived, the
+seed was skipped, and you got an empty marketplace behind a passing healthcheck.
+
+Both are fixed. The seed now asks the database whether it has already run, and
+adds its demo currencies to whatever the store already has instead of replacing
+them. If you are upgrading from an older deploy, delete the stale marker so
+nothing depends on it any more:
+
+```bash
+docker exec $(docker ps -qf name=backend) rm -f /app/static/.mercur-seeded
+```
+
+### The backend restarts over and over with "already exists"
+
+A failed seed used to take the whole container down with it: the entrypoint
+exited, Compose restarted it, the seed failed the same way, forever. Seeding is
+now non-fatal — the server starts and logs a warning instead. Re-run the seed by
+hand once you have fixed the cause:
+
+```bash
+docker exec -w /app $(docker ps -qf name=backend) npx medusa exec ./src/scripts/seed.js
+```
+
+### The vendor panel shows fewer stores than the admin panel
+
+This is expected, not a bug. The two panels answer different questions:
+
+- **Admin** (`/dashboard`) lists **every seller on the marketplace**, in any
+  status, from `GET /admin/sellers`.
+- **Vendor** (`/seller`) lists only **the stores the signed-in member belongs
+  to**, from `GET /vendor/sellers`, and hides terminated ones.
+
+The demo seed creates three sellers, each with its own member. So the admin panel
+shows three stores, and each demo seller signing in to the vendor panel sees one
+— their own. To let one person see several stores in the vendor panel, add their
+member account to each seller from the admin panel.
+
 ### The worker container never starts
 
 It waits for the backend to report healthy, which only happens once migrations
@@ -248,9 +338,14 @@ is applied as an overlay *inside the image only*, leaving
 - **The worker is optional** for a small marketplace. Delete the `worker` service
   and set `MEDUSA_WORKER_MODE: shared` on `backend` to run everything in one
   process.
+- **One image, two roles.** `backend` builds `mercur-backend:latest` and `worker`
+  reuses that exact tag with a different entrypoint role, so a deploy builds once.
+  Set `IMAGE_NAME` if you run several of these stacks on one host.
 - **Demo data.** Set `RUN_SEED=true` before the first deploy for a demo catalog
-  and seller (`seller@mercur.dev` / `supersecret`). It runs once; a marker on the
-  uploads volume stops it repeating.
+  and three demo sellers (`seller@mercur.dev`, `kickz@mercur.dev`,
+  `trailhead@mercur.dev` — all `supersecret`). Leaving it on is safe: the seed
+  checks the database for the demo seller and stops if it is there, so it never
+  runs over a marketplace you have started using.
 
 ### Optional settings
 
@@ -290,13 +385,30 @@ the admin panel for `NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY`.
 
 ### Running it locally
 
+The stack publishes no ports — on Dokploy, Traefik reaches the backend over the
+`dokploy-network`, so `localhost:9000` is not bound. To try it on your own
+machine you need a small override that publishes it:
+
 ```bash
 docker network create dokploy-network        # once
 cp deploy/.env.example deploy/.env           # then edit it
-docker compose -f deploy/docker-compose.yml --env-file deploy/.env up --build
+
+cat > deploy/docker-compose.local.yml <<'YAML'
+services:
+  backend:
+    ports:
+      - "9000:9000"
+YAML
+
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.local.yml \
+  --env-file deploy/.env -p mercur up --build
 ```
 
-The build context is the repository root, not this folder.
+Set `DOMAIN=localhost` and `MERCUR_BACKEND_URL=http://localhost:9000` in
+`deploy/.env` for a local run, then open `http://localhost:9000/dashboard`.
+
+The build context is the repository root, not this folder. Both `deploy/.env` and
+`deploy/docker-compose.local.yml` are yours alone — do not commit them.
 
 ### Upgrading Mercur
 
@@ -325,11 +437,19 @@ Run against Podman using the same command Dokploy issues:
 | Panels served at `/dashboard/` and `/seller/`, assets 200 | pass |
 | Origin compiled into the panels matches `MERCUR_BACKEND_URL` | pass |
 | Worker starts only after the backend is healthy, runs no migrations | pass |
+| Worker reuses the backend image — one build per deploy, not two | pass |
 | `medusa user` writes both the `user` and `provider_identity` rows | pass |
 | Login returns a token; a wrong password returns 401 | pass |
 | Admin user survives a rebuild — same id, login still works | pass |
-| Seeding does not repeat once the marker exists | pass |
 | Backend restart returns to healthy, login still works | pass |
+| `down` + `up`: store, currencies, regions, sellers and products all survive | pass |
+| Operator-added currency and region survive a redeploy | pass |
+| Re-running the seed on a seeded database is a clean no-op | pass |
+| Re-running the seed leaves an operator-added currency in place | pass |
+| Re-running the seed leaves an operator-renamed store alone | pass |
+| A failing seed logs a warning and the server still starts | pass |
+| A `/` in `POSTGRES_PASSWORD` is rejected with an actionable message | pass |
+| Admin lists all 3 demo sellers; each demo member sees only their own store | pass |
 
 Not verified locally: the router actually routing via the compose labels. The
 labels and network attachment were confirmed on the container, but the local
