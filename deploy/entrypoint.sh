@@ -74,7 +74,14 @@ require_secrets() {
 
 run_migrations() {
   echo "[entrypoint] running database migrations..."
-  npx medusa db:migrate
+  # --execute-safe-links, because this runs unattended. `db:migrate` also syncs
+  # module links, and when an upgrade changes them it PROMPTS for confirmation —
+  # there is no terminal here to answer, so a future Mercur or Medusa upgrade
+  # could stall the container on a question nobody can see. The flag answers it
+  # non-interactively and only ever applies the safe actions; anything that would
+  # drop a link table is left alone and reported, for you to run by hand with
+  # `npx medusa db:migrate --execute-all-links` once you have a backup.
+  npx medusa db:migrate --execute-safe-links
 }
 
 case "$ROLE" in

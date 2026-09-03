@@ -380,6 +380,13 @@ is applied as an overlay *inside the image only*, leaving
   switch to the S3 provider in `medusa-config.production.ts`.
 - **Only `backend` runs migrations.** The worker deliberately does not, so two
   containers never migrate at once. Preserve that if you add services.
+- **Upgrades keep your data.** A new image is deployed over the same volumes and
+  `medusa db:migrate` brings the schema forward in place. It runs with
+  `--execute-safe-links`, so link changes introduced by an upgrade are applied
+  only where they are safe and never stop the container on a confirmation prompt
+  it has no terminal to answer. If an upgrade reports an unsafe link action, take
+  a backup and then run it deliberately:
+  `npx medusa db:migrate --execute-all-links`.
 - **Redis is required.** Without it, in-flight workflow state is lost on every
   restart and the backend and worker cannot coordinate. Compose always sets it.
 - **The worker is optional** for a small marketplace. Delete the `worker` service
@@ -592,6 +599,8 @@ Run against Podman using the same command Dokploy issues:
 | The worker connects to Redis and stays up alongside the backend | pass |
 | Region, tax-region and category guards skip existing rows without duplicating | pass |
 | A seed that fails midway leaves the site up and serving (0 restarts) | pass |
+| A different image deployed over existing volumes keeps every row and upload | pass |
+| Migrations run unattended without stopping on a link-sync prompt | pass |
 
 Not verified locally: the router actually routing via the compose labels. The
 labels and network attachment were confirmed on the container, but the local
