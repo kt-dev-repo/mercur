@@ -102,7 +102,11 @@ case "$MODE" in
     log "configuration looks complete; checking the bucket..."
     rclone lsd "store:${S3_BUCKET}" >/dev/null || die "cannot reach the bucket — check S3_ENDPOINT, credentials, and that the bucket exists."
     log "bucket reachable."
-    pg_isready -d "$DATABASE_URL" >/dev/null 2>&1 && log "database reachable." || die "cannot reach the database."
+    if pg_isready -d "$DATABASE_URL" >/dev/null 2>&1; then
+      log "database reachable."
+    else
+      die "cannot reach the database."
+    fi
     log "OK."
     ;;
 
