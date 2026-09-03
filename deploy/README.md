@@ -359,6 +359,7 @@ Everything below is background. You do not need it to deploy.
 | `medusa-config.production.ts` | Production config overlay — adds Redis and worker mode |
 | `prepare-artifact.mjs` | Build-time fixups so the runtime image installs cleanly |
 | `.env.example` | The Step 3 block, plus the optional settings listed below |
+| `backup/` | The S3 backup sidecar — `pg_dump` to RustFS/S3 on a schedule |
 
 The upstream project is left untouched. Every deployment file lives in this
 folder, so pulling a newer Mercur never conflicts with it. The production config
@@ -456,6 +457,144 @@ Check the restore landed:
 docker exec $(docker ps -qf name=postgres) psql -U mercur -d mercur \
   -c 'select name from store;' -c 'select count(*) from seller;'
 ```
+
+### Backing up to S3 (RustFS)
+
+The manual `pg_dump` above is fine for a one-off. For backups that actually keep
+happening, the stack ships a `backup` sidecar: it dumps the database on a
+schedule, streams it straight into an S3 bucket, and prunes old copies. It works
+with RustFS, AWS S3, Cloudflare R2, Backblaze B2 and DigitalOcean Spaces — only
+`S3_ENDPOINT` changes between them.
+
+It is **opt-in**. Without `COMPOSE_PROFILES=backup` the service is not even
+created, so an existing deployment is unaffected.
+
+**1. Create the bucket.** In your RustFS console, make a bucket (e.g.
+`mercur-backups`) and an access key pair that can read and write it. The backup
+service will not create the bucket for you — that is deliberate, so a typo in the
+name fails loudly instead of quietly filling a bucket nobody looks at.
+
+**2. Add the settings** to Dokploy's Environment tab:
+
+```
+COMPOSE_PROFILES=backup
+
+S3_ENDPOINT=https://rustfs.example.com
+S3_BUCKET=mercur-backups
+S3_PREFIX=mercur
+S3_ACCESS_KEY_ID=...
+S3_SECRET_ACCESS_KEY=...
+S3_FORCE_PATH_STYLE=true
+
+BACKUP_INTERVAL_SECONDS=86400
+BACKUP_RETENTION_DAYS=30
+```
+
+`S3_FORCE_PATH_STYLE=true` matters: RustFS addresses buckets by path
+(`endpoint/bucket`), not as a subdomain the way AWS does. Leave `S3_ENDPOINT`
+out entirely only if you are using real AWS S3.
+
+**3. Deploy, then prove it works** before trusting it:
+
+```bash
+docker compose -p YOUR-PROJECT -f deploy/docker-compose.yml run --rm backup check
+```
+
+That checks the credentials, the bucket and the database and prints `OK.` — or
+tells you exactly which one is wrong. Then take one immediately, rather than
+waiting a day to find out:
+
+```bash
+docker compose -p YOUR-PROJECT -f deploy/docker-compose.yml run --rm backup once
+docker compose -p YOUR-PROJECT -f deploy/docker-compose.yml run --rm backup list
+```
+
+**Restoring.** Stop the app first — a running server holds rows the restore is
+replacing underneath it:
+
+```bash
+docker compose -p YOUR-PROJECT -f deploy/docker-compose.yml stop backend worker
+docker compose -p YOUR-PROJECT -f deploy/docker-compose.yml run --rm backup restore mercur-20260903-070601Z.dump
+docker compose -p YOUR-PROJECT -f deploy/docker-compose.yml start backend worker
+```
+
+Notes worth having:
+
+- Dumps are Postgres's compressed custom format and stream straight from
+  `pg_dump` into the bucket, so nothing large lands on the sidecar's disk.
+- A dump that fails partway is deleted from the bucket rather than left as a
+  plausible-looking but truncated file.
+- If S3 is unreachable the loop logs the failure and retries at the next
+  interval; it does not exit and does not restart-loop.
+- **Backups do not cover uploaded files.** Those live on the `uploads` volume.
+  To put them in object storage too, switch the file module in
+  `deploy/medusa-config.production.ts` to the S3 provider — the same RustFS
+  bucket works.
+
+### Rolling back a deployment
+
+Have this ready *before* you deploy, not after.
+
+**Before you deploy anything, take a backup and write down where you are:**
+
+```bash
+docker compose -p YOUR-PROJECT -f deploy/docker-compose.yml run --rm backup once
+git rev-parse --short HEAD    # or note the branch Dokploy is deploying
+```
+
+Then pick the rollback that matches what went wrong.
+
+**The deploy failed and the site is down, but the data is fine.** Almost always
+configuration. Fix the Environment tab and redeploy — you do not need to restore
+anything. The usual suspects are in [Troubleshooting](#troubleshooting): a
+missing `DOMAIN`, a `/` in `POSTGRES_PASSWORD`, `INSECURE_COOKIES` unset on http.
+
+**The new code is wrong and you want the old code back.** In Dokploy, point the
+service back at your previous branch or commit and **Rebuild**. Your data is
+untouched: volumes are not part of the image, and rolling the code back does not
+roll the database back.
+
+One caveat that applies to *any* rollback, not just this one: **migrations are
+one-way.** If the version you deployed added schema migrations, going back to
+older code leaves it running against a newer schema. When the older code cannot
+cope, restore the pre-deploy dump as well — which is why you take it first.
+
+> For the specific rollback from this branch to `main`: it adds no migrations, so
+> the schema is identical and a code-only rollback is clean. Two things to know
+> anyway. `main` has the seed bug this branch fixes, so if you roll back with
+> `RUN_SEED=true` its seed can crash-loop the container — set `RUN_SEED=false`
+> before rolling back. (This branch writes the legacy
+> `/app/static/.mercur-seeded` marker on a successful seed for exactly this
+> reason, so in most cases `main` will skip seeding on its own.) And `main` does
+> not understand `INSECURE_COOKIES`, so on plain http the panels go back to being
+> unable to log in.
+
+**The data is wrong — a bad migration, a bad script, a bad afternoon.** Restore
+the dump you took before deploying:
+
+```bash
+docker compose -p YOUR-PROJECT -f deploy/docker-compose.yml stop backend worker
+docker compose -p YOUR-PROJECT -f deploy/docker-compose.yml run --rm backup list
+docker compose -p YOUR-PROJECT -f deploy/docker-compose.yml run --rm backup restore <the-dump-from-before>
+docker compose -p YOUR-PROJECT -f deploy/docker-compose.yml start backend worker
+```
+
+Roll the code back **first** if the new code is what corrupted the data;
+otherwise it will simply do it again to the restored database.
+
+**Everything is gone and there is no backup.** There is no rollback. That is the
+whole argument for the section above.
+
+After any rollback, check the same three things:
+
+```bash
+curl -i https://YOUR-DOMAIN/health                      # 200
+docker exec $(docker ps -qf name=postgres) psql -U mercur -d mercur \
+  -c 'select name from store;' -c 'select count(*) from seller;'
+```
+
+and sign in to `/dashboard` — a healthcheck passing proves the server is up, not
+that anyone can log in.
 
 ### Surviving a service rename
 
@@ -601,6 +740,13 @@ Run against Podman using the same command Dokploy issues:
 | A seed that fails midway leaves the site up and serving (0 restarts) | pass |
 | A different image deployed over existing volumes keeps every row and upload | pass |
 | Migrations run unattended without stopping on a link-sync prompt | pass |
+| Backup sidecar is absent unless `COMPOSE_PROFILES=backup` is set | pass |
+| `backup check` reports a missing bucket instead of failing obscurely | pass |
+| Scheduled backups land in RustFS and old ones are pruned | pass |
+| Wrecked database fully restored from a RustFS dump | pass |
+| S3 unreachable for two intervals: logs, retries, 0 restarts, self-recovers | pass |
+| A not-yet-migrated database is skipped, not stored as an empty backup | pass |
+| The legacy seed marker is written, so a rollback to `main` will not re-seed | pass |
 
 Not verified locally: the router actually routing via the compose labels. The
 labels and network attachment were confirmed on the container, but the local

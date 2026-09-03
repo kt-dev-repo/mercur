@@ -94,16 +94,23 @@ case "$ROLE" in
     else
       echo "[entrypoint] RUN_MIGRATIONS=false — skipping migrations."
     fi
-    # No marker file. This used to be /app/static/.mercur-seeded on the uploads
-    # volume — a flag for the state of a *different* volume, which broke both ways:
-    # losing the database but keeping uploads left the marketplace permanently empty
-    # behind a green healthcheck, and losing uploads but keeping the database re-ran
-    # the seed over live data. The seed script now decides for itself by looking at
-    # the database, so the answer can never disagree with the data.
+    # Nothing here decides whether to seed. That used to be a marker file at
+    # /app/static/.mercur-seeded — on the uploads volume, guarding data in the
+    # postgres volume — and it broke both ways: losing the database but keeping
+    # uploads left the marketplace permanently empty behind a green healthcheck,
+    # and losing uploads but keeping the database re-ran the seed over live data.
+    # The seed script now asks the database itself, so the answer cannot disagree
+    # with the data. (The marker is still *written* below, for rollbacks only.)
     if [ "$RUN_SEED" = "true" ]; then
       echo "[entrypoint] seeding demo data (a no-op if this marketplace is already seeded)..."
       if npx medusa exec ./src/scripts/seed.js; then
         echo "[entrypoint] seed step finished."
+        # Nothing in THIS version reads this file. It is written only so that
+        # rolling the deployment back to a pre-fix image is safe: that older
+        # entrypoint keys "already seeded" off this marker, and without it would
+        # re-run its non-idempotent seed over a populated database and crash-loop
+        # the container. Cheap insurance on the rollback path.
+        touch /app/static/.mercur-seeded 2>/dev/null || true
       else
         # Demo data is optional; the marketplace is not. Exiting here would restart
         # the container, retry the same failing seed and exit again — an unreachable
