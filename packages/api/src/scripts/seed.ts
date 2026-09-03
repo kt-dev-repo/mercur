@@ -349,7 +349,12 @@ export default async function seedDemoData({ container }: ExecArgs) {
   logger.info("Seeding region data...");
   const regionModuleService = container.resolve(Modules.REGION);
 
+  // `select` alongside `relations`, for the same reason as the categories lookup
+  // below: a module list call that is not told which fields it needs can return
+  // id-only rows, and every `iso_2` read here would then be undefined — silently
+  // making every country look unassigned and creating a duplicate region.
   const existingRegions = await regionModuleService.listRegions({}, {
+    select: ["id", "name"],
     relations: ["countries"],
   });
 
@@ -402,7 +407,12 @@ export default async function seedDemoData({ container }: ExecArgs) {
 
   logger.info("Seeding tax regions...");
   const taxModuleService = container.resolve(Modules.TAX);
-  const existingTaxRegions = await taxModuleService.listTaxRegions();
+  // Same reason: without `select` this can come back id-only, every country_code
+  // reads as undefined, and the seed recreates tax regions that already exist.
+  const existingTaxRegions = await taxModuleService.listTaxRegions(
+    {},
+    { select: ["id", "country_code"] }
+  );
   const existingCountryCodes = new Set(existingTaxRegions.map((tr) => tr.country_code));
   const countriesToCreate = countries.filter((c) => !existingCountryCodes.has(c));
 

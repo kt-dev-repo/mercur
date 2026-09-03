@@ -86,6 +86,10 @@ services:
       AUTH_CORS: ${AUTH_CORS:-${MERCUR_BACKEND_URL}}
       FILE_BACKEND_URL: ${FILE_BACKEND_URL:-${MERCUR_BACKEND_URL}/static}
       MERCUR_VENDOR_URL: ${MERCUR_VENDOR_URL:-${MERCUR_BACKEND_URL}/seller}
+      # Serving over plain http? See INSECURE_COOKIES in .env.example — without it
+      # the panels cannot log in, because Medusa marks session cookies Secure in
+      # production and the browser then never stores them.
+      INSECURE_COOKIES: ${INSECURE_COOKIES:-false}
       STOREFRONT_REVALIDATE_URL: ${STOREFRONT_REVALIDATE_URL:-}
       STOREFRONT_REVALIDATE_SECRET: ${STOREFRONT_REVALIDATE_SECRET:-}
     volumes:
@@ -162,6 +166,7 @@ services:
       AUTH_CORS: ${AUTH_CORS:-${MERCUR_BACKEND_URL}}
       FILE_BACKEND_URL: ${FILE_BACKEND_URL:-${MERCUR_BACKEND_URL}/static}
       MERCUR_VENDOR_URL: ${MERCUR_VENDOR_URL:-${MERCUR_BACKEND_URL}/seller}
+      INSECURE_COOKIES: ${INSECURE_COOKIES:-false}
     volumes:
       - uploads:/app/static
     stop_grace_period: 30s

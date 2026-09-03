@@ -65,6 +65,8 @@ AUTH_CORS=http://api.example.com
 
 RUN_MIGRATIONS=true
 RUN_SEED=false
+
+INSECURE_COOKIES=true
 ```
 
 Generate `JWT_SECRET` and `COOKIE_SECRET` by running this twice, using a
@@ -97,6 +99,13 @@ deletes your data.
 
 **Start with `http://`, not `https://`.** You do not have a certificate yet.
 Step 6 covers switching over once you do.
+
+**`INSECURE_COOKIES=true` is required while you are on `http://`.** Medusa marks
+the session cookie `Secure` whenever `NODE_ENV=production`, and no browser will
+store a `Secure` cookie from an `http` page — so the panels accept your password,
+return 200, and drop you straight back on the login screen with no error at all.
+This setting removes the flag. It is a genuine downgrade: sessions travel in the
+clear. Step 6 turns it back off.
 
 ### Why there are two URL settings
 
@@ -156,7 +165,9 @@ curl -s -X POST http://api.example.com/auth/user/emailpass \
 ```
 
 A long `{"token":"eyJ..."}` means success. Now sign in at
-`http://api.example.com/dashboard`.
+`http://api.example.com/dashboard`. If the page accepts your password and then
+returns to the login screen, `INSECURE_COOKIES` is not set — see
+[Troubleshooting](#the-panel-accepts-the-password-then-returns-to-the-login-screen).
 
 ## Step 6 — switch on HTTPS
 
@@ -166,7 +177,9 @@ domain. After `https://api.example.com/health` works:
 1. Go back to the **Environment** tab
 2. Change **every** `http://` to `https://` — that is `MERCUR_BACKEND_URL` and
    all four `*_CORS` values
-3. Save, then click **Rebuild**
+3. Set `INSECURE_COOKIES=false` — this is the point of the exercise; leaving it
+   on keeps your session cookies unencrypted
+4. Save, then click **Rebuild**
 
 **It must be Rebuild, not Restart.** `MERCUR_BACKEND_URL` is compiled into the
 panels' JavaScript, and only a rebuild recompiles them. A restart leaves the
@@ -202,6 +215,27 @@ curl -s "http://api.example.com$ASSET" | grep -o 'backendUrl:"[^"]*"'
 
 The address it prints must match your browser's, scheme included. If it does not,
 correct `MERCUR_BACKEND_URL` and **Rebuild**.
+
+### The panel accepts the password, then returns to the login screen
+
+No error, no failed request — the login call succeeds and the page just comes
+back. You are on `http://` with `INSECURE_COOKIES` unset or false.
+
+Medusa marks the session cookie `Secure` in production, and browsers refuse to
+store a `Secure` cookie from a plain-http page. Express does not treat that as an
+error: it answers 200 and simply omits the cookie. You can see it from the host —
+there is no `set-cookie` header at all:
+
+```bash
+TOKEN=$(curl -s -X POST http://api.example.com/auth/user/emailpass \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com","password":"your-password"}' | sed 's/.*"token":"//;s/".*//')
+curl -s -i -X POST http://api.example.com/auth/session \
+  -H "Authorization: Bearer $TOKEN" | grep -i '^set-cookie' || echo "no cookie set"
+```
+
+Set `INSECURE_COOKIES=true` and **Rebuild**, or finish [Step 6](#step-6--switch-on-https)
+and use https — on https the cookie works and this setting is not needed.
 
 ### Signing in says "Invalid email or password"
 
@@ -282,6 +316,13 @@ hand once you have fixed the cause:
 docker exec -w /app $(docker ps -qf name=backend) npx medusa exec ./src/scripts/seed.js
 ```
 
+One limit worth knowing: the seed handles "already fully seeded" and "not seeded
+at all" cleanly, but it cannot resume from an arbitrary half-finished state — if
+it died partway through creating sellers, a re-run may fail on whatever it
+already wrote. Demo data is not worth untangling by hand: drop the database
+volume and deploy again, or simply leave `RUN_SEED=false` and build your catalog
+in the panel. Either way the site keeps serving in the meantime.
+
 ### The vendor panel shows fewer stores than the admin panel
 
 This is expected, not a bug. The two panels answer different questions:
@@ -326,8 +367,14 @@ is applied as an overlay *inside the image only*, leaving
 
 ### Before you go live
 
-- **Back up Postgres.** Your data lives in the `postgres-data` volume. Use
-  Dokploy's backup schedule, or point `DATABASE_URL` at a managed database.
+- **Back up Postgres.** Your data lives in the `postgres-data` volume, and
+  nothing recreates it for you. See [Backing up and
+  restoring](#backing-up-and-restoring) below — do this before you take orders,
+  not after.
+- **Consider pinning the volume names.** By default they are scoped to the
+  Compose project, so renaming or recreating the Dokploy service leaves your
+  data behind in an orphaned volume. See [Surviving a service
+  rename](#surviving-a-service-rename).
 - **Uploads are on a local volume** at `/app/static`. They survive redeploys but
   cannot be shared across multiple backend replicas. Before scaling past one,
   switch to the S3 provider in `medusa-config.production.ts`.
@@ -359,10 +406,95 @@ The four `*_CORS` values each fall back to `MERCUR_BACKEND_URL`, so the panels w
 even if you omit them. Set them explicitly anyway: they are what you edit when you
 move to `https` and when you add a storefront origin.
 
+`INSECURE_COOKIES` is covered in Step 3 and Step 6. It only ever needs to be true
+while the site is served over plain http.
+
 `JWT_SECRET` and `COOKIE_SECRET` are checked twice — Compose refuses to start
 without them, and `entrypoint.sh` refuses again for any other way the image is run.
 Unset, Medusa would fall back to the literal `supersecret` and sign every session
 token with a value published in this repository.
+
+### Backing up and restoring
+
+Your database lives in the `postgres-data` volume. Losing that volume loses the
+marketplace, so take dumps somewhere else. These commands are run on the Dokploy
+host; substitute your own container name if you run more than one stack.
+
+Back up:
+
+```bash
+docker exec $(docker ps -qf name=postgres) pg_dump -U mercur -Fc mercur \
+  > mercur-$(date +%Y%m%d-%H%M).dump
+```
+
+`-Fc` is Postgres's compressed custom format — a full marketplace dumps to well
+under a megabyte, so this is cheap to run often. Automate it with Dokploy's
+backup schedule or a host cron job, and copy the files off the server.
+
+Restore over an existing database:
+
+```bash
+docker exec -i $(docker ps -qf name=postgres) \
+  pg_restore -U mercur -d mercur --clean --if-exists --no-owner < mercur-20260903-0412.dump
+```
+
+`--clean --if-exists` drops each object before recreating it, so this works
+whether the database is empty or populated. Stop the `backend` and `worker`
+containers first if the site is live — restoring under an active server can
+leave it holding stale rows in memory.
+
+Check the restore landed:
+
+```bash
+docker exec $(docker ps -qf name=postgres) psql -U mercur -d mercur \
+  -c 'select name from store;' -c 'select count(*) from seller;'
+```
+
+### Surviving a service rename
+
+Compose names volumes after the project: your database is really
+`<project>_postgres-data`. Dokploy derives that project name from the service,
+so **deleting and recreating the service, or renaming it, points the new stack at
+a new empty volume** — the old one is still on disk, but nothing references it.
+That is the most common way a marketplace "loses everything" on a redeploy when
+the deploy itself was fine.
+
+To decouple the data from the project name, give the volumes fixed names and
+declare them external, so Compose fails loudly if they are missing instead of
+quietly creating empty ones.
+
+First, with the stack stopped, copy each volume to a fixed name:
+
+```bash
+docker compose -p YOUR-PROJECT -f deploy/docker-compose.yml down
+
+for v in postgres-data redis-data uploads; do
+  docker volume create "mercur-$v"
+  docker run --rm -v "YOUR-PROJECT_$v":/from:ro -v "mercur-$v":/to alpine \
+    sh -c 'cd /from && cp -a . /to/'
+done
+```
+
+Then replace the `volumes:` block at the bottom of `deploy/docker-compose.yml`:
+
+```yaml
+volumes:
+  postgres-data:
+    name: mercur-postgres-data
+    external: true
+  redis-data:
+    name: mercur-redis-data
+    external: true
+  uploads:
+    name: mercur-uploads
+    external: true
+```
+
+Deploy again and confirm your data is there before deleting the old volumes.
+
+This is deliberately **not** the default: switching an existing deployment to
+different volume names without copying the data first would start it against an
+empty database — exactly the failure this avoids.
 
 ### Using a managed database
 
@@ -450,6 +582,16 @@ Run against Podman using the same command Dokploy issues:
 | A failing seed logs a warning and the server still starts | pass |
 | A `/` in `POSTGRES_PASSWORD` is rejected with an actionable message | pass |
 | Admin lists all 3 demo sellers; each demo member sees only their own store | pass |
+| `pg_dump` then `pg_restore --clean --if-exists` round-trips a live database | pass |
+| Copying a volume to a fixed name preserves the database intact | pass |
+| Over http with `INSECURE_COOKIES=false`, `/auth/session` sets no cookie | reproduced |
+| With `INSECURE_COOKIES=true` the session cookie is set and accepted | pass |
+| Admin panel: browser login, sidebar loads, Stores lists all 3 sellers | pass |
+| Vendor Hub: browser login, store-select lists only the member's own store | pass |
+| Store API serves the seeded catalog (12 products, 3 sellers, 203 offers) | pass |
+| The worker connects to Redis and stays up alongside the backend | pass |
+| Region, tax-region and category guards skip existing rows without duplicating | pass |
+| A seed that fails midway leaves the site up and serving (0 restarts) | pass |
 
 Not verified locally: the router actually routing via the compose labels. The
 labels and network attachment were confirmed on the container, but the local
