@@ -35,7 +35,7 @@ without Stage 1 means hand-verifying payment code, which is the worst place to b
 # Stage 1 — Foundation
 
 No credentials needed. Buildable start to finish today.
-Progress: **8 / 20**
+Progress: **16 / 20**
 
 ## 1a. Regression tests for what actually broke
 
@@ -56,13 +56,13 @@ Config guards and shell behaviour cannot be reached from jest: the production co
 deploy-time overlay outside jest's `src/**` `testMatch`, and the migration is SQL inside a
 shell script. Both are fast to check at container level.
 
-- [ ] `FILE_STORAGE` unset / `local` / fully-configured `s3` all load
-- [ ] `s3` missing bucket, public URL or credentials fails, naming each one
-- [ ] `FILE_STORAGE=nonsense` refuses to boot
-- [ ] `INSECURE_COOKIES=true` over http yields a `Set-Cookie`; unset yields none
-- [ ] `backup once` → `restore` round-trips a database
-- [ ] `migrate-uploads` rewrites only this deployment's files, leaving CDN URLs alone
-- [ ] A redeploy preserves store, sellers, products, offers and users
+- [x] `FILE_STORAGE` unset / `local` / fully-configured `s3` all load
+- [x] `s3` missing bucket, public URL or credentials fails, naming each one
+- [x] `FILE_STORAGE=nonsense` refuses to boot
+- [x] `INSECURE_COOKIES=true` over http yields a `Set-Cookie`; unset yields none
+- [x] `backup once` → `restore` round-trips a database
+- [x] `migrate-uploads` rewrites only this deployment's files, leaving CDN URLs alone
+- [x] A redeploy preserves store, sellers, products, offers and users
 
 ## 1b. Core marketplace flow coverage
 
@@ -76,7 +76,7 @@ shell script. Both are fast to check at container level.
 
 - [x] `.github/workflows/ci.yml` — job 1: `npm ci` → **`npm run codegen` first** → `check-types` → `lint`
 - [x] Job 2: Postgres + Redis services, populate the empty `packages/api/.env.test`, run all three jest modes
-- [ ] Job 3: build the image and run `deploy/smoke-test.sh` — **pull requests only** (~8 min)
+- [x] Job 3: build the image and run `deploy/smoke-test.sh` — **pull requests only** (~8 min)
 
 ## 1d. Restore drill and proof
 

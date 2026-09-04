@@ -104,3 +104,15 @@ jobs:
 
       - name: Unit tests
         run: npm run test:unit --workspace @acme/api
+
+  smoke:
+    name: Container smoke test
+    # Pull requests only. It builds the image and drives a full stack, so it runs for
+    # about fifteen minutes — on every push that gets switched off out of irritation,
+    # and a disabled test protects nothing.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - run: ./deploy/smoke-test.sh
