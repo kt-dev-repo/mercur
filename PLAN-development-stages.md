@@ -35,7 +35,7 @@ without Stage 1 means hand-verifying payment code, which is the worst place to b
 # Stage 1 — Foundation
 
 No credentials needed. Buildable start to finish today.
-Progress: **18 / 20**
+Progress: **19 / 20**
 
 ## 1a. Regression tests for what actually broke
 
@@ -67,7 +67,7 @@ shell script. Both are fast to check at container level.
 ## 1b. Core marketplace flow coverage
 
 - [x] Seller lifecycle — register → `pending_approval` → approve → `open`; suspend, reinstate
-- [ ] Catalogue — vendor creates a product, admin approves, vendor creates an offer
+- [x] Catalogue — vendor creates a product, admin approves, vendor creates an offer
 - [ ] Multi-seller checkout — two sellers in one cart → one order group, one order each
 - [x] **Scoping** — a vendor authenticated for seller A cannot read seller B's orders
       (a security property, not a feature)
