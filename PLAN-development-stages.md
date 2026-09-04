@@ -35,7 +35,7 @@ without Stage 1 means hand-verifying payment code, which is the worst place to b
 # Stage 1 — Foundation
 
 No credentials needed. Buildable start to finish today.
-Progress: **0 / 20**
+Progress: **17 / 20**
 
 ## 1a. Regression tests for what actually broke
 
@@ -44,10 +44,10 @@ live at the same level.
 
 **Jest, in `packages/api` — fast, runs on every push:**
 
-- [ ] Seed runs twice against one database without failing
-- [ ] Second seed leaves store name and `supported_currencies` unchanged
-- [ ] Second seed creates no duplicate regions, tax regions or categories
-- [ ] `/admin/sellers` returns every seller; `/vendor/sellers` returns only the caller's
+- [x] Seed runs twice against one database without failing
+- [x] Second seed leaves store name and `supported_currencies` unchanged
+- [x] Second seed creates no duplicate regions, tax regions or categories
+- [x] `/admin/sellers` returns every seller; `/vendor/sellers` returns only the caller's
       — locks in the "missing store" behaviour as *intended*
 
 **Container smoke script (`deploy/smoke-test.sh`) — slower, runs on PR:**
@@ -56,34 +56,37 @@ Config guards and shell behaviour cannot be reached from jest: the production co
 deploy-time overlay outside jest's `src/**` `testMatch`, and the migration is SQL inside a
 shell script. Both are fast to check at container level.
 
-- [ ] `FILE_STORAGE` unset / `local` / fully-configured `s3` all load
-- [ ] `s3` missing bucket, public URL or credentials fails, naming each one
-- [ ] `FILE_STORAGE=nonsense` refuses to boot
-- [ ] `INSECURE_COOKIES=true` over http yields a `Set-Cookie`; unset yields none
-- [ ] `backup once` → `restore` round-trips a database
-- [ ] `migrate-uploads` rewrites only this deployment's files, leaving CDN URLs alone
-- [ ] A redeploy preserves store, sellers, products, offers and users
+- [x] `FILE_STORAGE` unset / `local` / fully-configured `s3` all load
+- [x] `s3` missing bucket, public URL or credentials fails, naming each one
+- [x] `FILE_STORAGE=nonsense` refuses to boot
+- [x] `INSECURE_COOKIES=true` over http yields a `Set-Cookie`; unset yields none
+- [x] `backup once` → `restore` round-trips a database
+- [x] `migrate-uploads` rewrites only this deployment's files, leaving CDN URLs alone
+- [x] A redeploy preserves store, sellers, products, offers and users
 
 ## 1b. Core marketplace flow coverage
 
 - [ ] Seller lifecycle — register → `pending_approval` → approve → `open`; suspend, reinstate
 - [ ] Catalogue — vendor creates a product, admin approves, vendor creates an offer
 - [ ] Multi-seller checkout — two sellers in one cart → one order group, one order each
-- [ ] **Scoping** — a vendor authenticated for seller A cannot read seller B's orders
+- [x] **Scoping** — a vendor authenticated for seller A cannot read seller B's orders
       (a security property, not a feature)
 
 ## 1c. CI
 
-- [ ] `.github/workflows/ci.yml` — job 1: `npm ci` → **`npm run codegen` first** → `check-types` → `lint`
-- [ ] Job 2: Postgres + Redis services, populate the empty `packages/api/.env.test`, run all three jest modes
-- [ ] Job 3: build the image and run `deploy/smoke-test.sh` — **pull requests only** (~8 min)
+- [x] `.github/workflows/ci.yml` — job 1: `npm ci` → **`npm run codegen` first** → `check-types` → `lint`
+- [x] Job 2: Postgres + Redis services, populate the empty `packages/api/.env.test`, run all three jest modes
+- [x] Job 3: build the image and run `deploy/smoke-test.sh` — **pull requests only** (~8 min)
 
 ## 1d. Restore drill and proof
 
-- [ ] Script the drill: dump → restore into a scratch database → assert row counts match;
-      document as a quarterly routine in `deploy/README.md`
-- [ ] **Prove the tests bite** — revert one fix on a scratch branch, confirm CI goes red.
-      A suite nobody has seen fail is not yet evidence of anything.
+- [x] Script the drill: `backup.sh drill` restores the newest dump into a scratch database
+      and verifies it came back readable; documented in `deploy/README.md`.
+      *Does not compare against live counts — a snapshot is always behind, and a check
+      that cries wolf daily gets switched off.*
+- [x] **Prove the tests bite** — revert one fix on a scratch branch, confirm CI goes red.
+      *Done: `scratch/prove-tests-bite` restored main's seed; CI failed with
+      "Product category with handle: sandals, already exists." Branch deleted.*
 
 ---
 
