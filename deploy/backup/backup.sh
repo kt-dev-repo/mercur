@@ -7,6 +7,8 @@
 #   backup.sh list              list the backups currently in the bucket
 #   backup.sh restore <name>    restore one backup by file name (asks nothing — be sure)
 #   backup.sh check             verify the configuration and the bucket, take nothing
+#   backup.sh drill             prove the newest backup actually restores, into a scratch
+#                               database, without touching the live one
 #   backup.sh migrate-uploads   move files already on the uploads volume into the media
 #                               bucket and repoint the database at them. Reports only,
 #                               unless you add --apply. Add --skip-public-check only if
@@ -147,6 +149,74 @@ case "$MODE" in
     done
     ;;
 
+  drill)
+    # An untested backup is not a backup. This restores the newest dump into a throwaway
+    # database beside the real one, checks it came back readable, and drops it again. The
+    # live database is never written to, so it is safe to run on a schedule against
+    # production — which is the only way to learn that your backups stopped working
+    # before the day you need one.
+    #
+    # It deliberately does NOT require the restored counts to equal the live ones. A
+    # backup is a snapshot; on any marketplace taking orders the newest dump is already
+    # behind by the time it lands, so comparing against live would fail every single day
+    # and the drill would be switched off within a week. What is checked is that the dump
+    # restores without error and that the schema and data are actually there. The counts
+    # are printed next to the live ones so drift is visible to a human without being
+    # treated as a failure.
+    configure_rclone
+    require_database_url
+
+    LATEST=$(rclone lsf "$REMOTE" 2>/dev/null | grep '\.dump$' | sort | tail -1)
+    [ -n "$LATEST" ] || die "no backups found in ${REMOTE} — nothing to drill."
+    log "drilling with the newest backup: ${LATEST}"
+
+    BASE_DB=$(printf '%s' "$DATABASE_URL" | sed 's/?.*//' | sed 's|.*/||')
+    QUERY=$(printf '%s' "$DATABASE_URL" | grep -o '?.*' || true)
+    SCRATCH="${BASE_DB}_drill"
+    ADMIN_URL=$(printf '%s' "$DATABASE_URL" | sed "s|/${BASE_DB}\(?.*\)\{0,1\}$|/postgres${QUERY}|")
+    SCRATCH_URL=$(printf '%s' "$DATABASE_URL" | sed "s|/${BASE_DB}\(?.*\)\{0,1\}$|/${SCRATCH}${QUERY}|")
+
+    drop_scratch() { psql -d "$ADMIN_URL" -q -c "drop database if exists \"$SCRATCH\";" >/dev/null 2>&1; }
+    trap drop_scratch EXIT
+
+    drop_scratch
+    psql -d "$ADMIN_URL" -q -c "create database \"$SCRATCH\";" >/dev/null || die "could not create the scratch database."
+
+    if ! rclone cat "${REMOTE}/${LATEST}" | pg_restore -d "$SCRATCH_URL" --clean --if-exists --no-owner 2>/tmp/drill.err; then
+      cat /tmp/drill.err >&2
+      die "drill FAILED — ${LATEST} did not restore. Investigate now, not when you need it."
+    fi
+
+    FAILED=0
+    for t in store seller product offer region; do
+      live=$(psql -d "$DATABASE_URL" -tAc "select count(*) from \"$t\"" 2>/dev/null || echo "?")
+      restored=$(psql -d "$SCRATCH_URL" -tAc "select count(*) from \"$t\"" 2>/dev/null || echo "?")
+      if [ "$restored" = "?" ]; then
+        log "  ${t}: NOT READABLE in the restored copy"
+        FAILED=1
+      elif [ "$live" = "$restored" ]; then
+        log "  ${t}: ${restored} (live ${live})"
+      else
+        log "  ${t}: ${restored} (live ${live} — drifted since the backup, expected on a busy site)"
+      fi
+    done
+
+    # A marketplace always has exactly one store row once migrations have run. Zero means
+    # the dump restored its schema but none of its data — the failure mode that looks like
+    # success right up until you rely on it.
+    store_rows=$(psql -d "$SCRATCH_URL" -tAc "select count(*) from store" 2>/dev/null || echo 0)
+    if [ "${store_rows:-0}" -lt 1 ] 2>/dev/null; then
+      log "  the restored database has no store row — the dump carries schema but no data"
+      FAILED=1
+    fi
+
+    if [ "$FAILED" -eq 0 ]; then
+      log "drill passed: ${LATEST} restores cleanly and the data is there."
+    else
+      die "drill FAILED — see above."
+    fi
+    ;;
+
   migrate-uploads)
     # Moves what the LOCAL provider wrote into the bucket the S3 provider reads,
     # then repoints the database. Only needed once, when switching FILE_STORAGE
@@ -269,6 +339,6 @@ case "$MODE" in
     ;;
 
   *)
-    die "unknown mode '$MODE' (expected: loop, once, list, restore, check, migrate-uploads)"
+    die "unknown mode '$MODE' (expected: loop, once, list, restore, check, drill, migrate-uploads)"
     ;;
 esac

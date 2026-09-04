@@ -704,6 +704,35 @@ docker exec $(docker ps -qf name=postgres) psql -U mercur -d mercur \
 and sign in to `/dashboard` — a healthcheck passing proves the server is up, not
 that anyone can log in.
 
+### Proving the backups actually restore
+
+A backup nobody has restored is a hope, not a backup. `drill` restores the newest dump
+into a throwaway database beside the real one, checks it came back readable, and drops
+it again. The live database is never written to, so this is safe against production:
+
+```bash
+docker compose -p YOUR-PROJECT -f deploy/docker-compose.yml run --rm backup drill
+```
+
+```
+[backup] drilling with the newest backup: mercur-20260904-063854Z.dump
+[backup]   store: 1 (live 1)
+[backup]   seller: 3 (live 3)
+[backup]   product: 12 (live 12)
+[backup]   offer: 203 (live 203)
+[backup]   region: 1 (live 2 — drifted since the backup, expected on a busy site)
+[backup] drill passed: mercur-20260904-063854Z.dump restores cleanly and the data is there.
+```
+
+It deliberately does **not** require the restored counts to equal the live ones. A backup
+is a snapshot, so on any marketplace taking orders the newest dump is already behind by
+the time it lands; a drill that failed on that would cry wolf daily and be switched off
+within a week. Drift is printed for a human to eyeball. It fails only on the things that
+actually mean your backups are broken: the dump not restoring, a table not coming back
+readable, or a restore that carries the schema but none of the data.
+
+**Run it monthly, and after any change to the database or the backup settings.**
+
 ### Surviving a service rename
 
 Compose names volumes after the project: your database is really
@@ -866,6 +895,8 @@ Run against Podman using the same command Dokploy issues:
 | Wrecked database fully restored from a RustFS dump | pass |
 | S3 unreachable for two intervals: logs, retries, 0 restarts, self-recovers | pass |
 | A not-yet-migrated database is skipped, not stored as an empty backup | pass |
+| `backup drill` restores the newest dump to a scratch database and passes | pass |
+| The drill reports post-backup drift without failing on it | pass |
 | The legacy seed marker is written, so a rollback to `main` will not re-seed | pass |
 
 Not verified locally: the router actually routing via the compose labels. The
