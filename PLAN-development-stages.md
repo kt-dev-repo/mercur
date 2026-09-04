@@ -35,7 +35,7 @@ without Stage 1 means hand-verifying payment code, which is the worst place to b
 # Stage 1 — Foundation
 
 No credentials needed. Buildable start to finish today.
-Progress: **7 / 20**
+Progress: **8 / 20**
 
 ## 1a. Regression tests for what actually broke
 
@@ -82,8 +82,9 @@ shell script. Both are fast to check at container level.
 
 - [ ] Script the drill: dump → restore into a scratch database → assert row counts match;
       document as a quarterly routine in `deploy/README.md`
-- [ ] **Prove the tests bite** — revert one fix on a scratch branch, confirm CI goes red.
-      A suite nobody has seen fail is not yet evidence of anything.
+- [x] **Prove the tests bite** — revert one fix on a scratch branch, confirm CI goes red.
+      *Done: `scratch/prove-tests-bite` restored main's seed; CI failed with
+      "Product category with handle: sandals, already exists." Branch deleted.*
 
 ---
 
