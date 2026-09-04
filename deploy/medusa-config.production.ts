@@ -5,15 +5,16 @@
 // image only*. The upstream file stays untouched in Git so `git pull` / template
 // upgrades never conflict.
 //
-// It is a copy of the upstream config plus exactly three additions, each marked
+// It is a copy of the upstream config plus exactly four additions, each marked
 // with "OVERLAY:" below:
 //   1. the Redis-backed cache / event bus / workflow engine / locking modules
 //   2. `workerMode`, so the server and worker containers can be split
 //   3. an opt-out from Secure session cookies, for http-only deployments
+//   4. S3-compatible object storage for uploads, when a bucket is configured
 //
 // >>> WHEN YOU UPGRADE MERCUR, RE-SYNC THIS FILE. <<<
 //   diff -u packages/api/medusa-config.ts deploy/medusa-config.production.ts
-// Everything except the two OVERLAY blocks should be identical.
+// Everything except the OVERLAY blocks should be identical.
 // ---------------------------------------------------------------------------
 import { loadEnv } from '@medusajs/framework/utils'
 import { withMercur } from '@mercurjs/core'
@@ -33,7 +34,7 @@ const dashboardAppDir = (name: string) => {
   return fs.existsSync(bundled) ? bundled : path.join(__dirname, `../../apps/${name}`)
 }
 
-// OVERLAY 1/2 — Redis.
+// OVERLAY 1/4 — Redis.
 // Required in production: the in-memory workflow engine loses in-flight workflow
 // state on every restart and cannot be shared between the server and worker
 // containers. Registered only when REDIS_URL is set, so this file still runs
@@ -76,7 +77,7 @@ const redisModules = REDIS_URL
     ]
   : []
 
-// OVERLAY 3/3 — session cookie security.
+// OVERLAY 3/4 — session cookie security.
 // Medusa's express-loader hardcodes `secure: true` on the session cookie whenever
 // NODE_ENV is production or staging, and express-session then silently declines to
 // send Set-Cookie on a request it does not consider secure. The symptom is precise
@@ -91,10 +92,99 @@ const redisModules = REDIS_URL
 // rebuild — the moment https works.
 const INSECURE_COOKIES = process.env.INSECURE_COOKIES === 'true'
 
+// OVERLAY 4/4 — where uploaded files live.
+// FILE_STORAGE picks the provider for every upload: product images and videos,
+// seller logos and banners, anything a block adds later.
+//
+//   local (default)  the `uploads` volume at /app/static, exactly as upstream
+//   s3               S3-compatible object storage — RustFS, AWS S3, R2, B2, Spaces
+//
+// It is one or the other for the whole deployment, not a per-upload choice:
+// @medusajs/file refuses to boot with more than one provider registered
+// ("File module should be initialized with exactly one provider").
+//
+// Switching only changes where NEW uploads go. Stored URLs are absolute, so files
+// already uploaded keep resolving from wherever they were written — which is why
+// the uploads volume stays mounted after moving to s3. To move the old files
+// across as well, run `backup.sh migrate-uploads`; see deploy/README.md.
+//
+// @medusajs/file-s3 ships with Medusa; there is nothing to install.
+const FILE_STORAGE = process.env.FILE_STORAGE || 'local'
+
+if (FILE_STORAGE !== 'local' && FILE_STORAGE !== 's3') {
+  throw new Error(
+    `FILE_STORAGE must be "local" or "s3", got "${FILE_STORAGE}". ` +
+      'Refusing to guess: quietly falling back to local here would write uploads to a ' +
+      'container volume you did not intend to depend on.'
+  )
+}
+
+if (FILE_STORAGE === 's3') {
+  // Checked here rather than left to the provider, because the failure is silent
+  // rather than loud. The provider builds every public URL as `${file_url}/${key}`,
+  // so a missing file_url stores every image as "undefined/foo.png" — the upload
+  // reports success and the entire catalogue renders broken.
+  const missing = [
+    !process.env.S3_FILE_BUCKET && 'S3_FILE_BUCKET',
+    !process.env.S3_FILE_PUBLIC_URL && 'S3_FILE_PUBLIC_URL',
+    !process.env.S3_ACCESS_KEY_ID && 'S3_ACCESS_KEY_ID',
+    !process.env.S3_SECRET_ACCESS_KEY && 'S3_SECRET_ACCESS_KEY',
+  ].filter(Boolean)
+
+  if (missing.length) {
+    throw new Error(
+      `FILE_STORAGE=s3 but ${missing.join(', ')} ${missing.length > 1 ? 'are' : 'is'} not set. ` +
+        'S3_FILE_PUBLIC_URL is the address that serves the bucket to a browser, ' +
+        'e.g. https://rustfs.example.com/mercur-media'
+    )
+  }
+}
+
+const fileProviders =
+  FILE_STORAGE === 's3'
+    ? [
+        {
+          resolve: '@medusajs/medusa/file-s3',
+          id: 's3',
+          options: {
+            file_url: process.env.S3_FILE_PUBLIC_URL,
+            bucket: process.env.S3_FILE_BUCKET,
+            prefix: process.env.S3_FILE_PREFIX || '',
+            endpoint: process.env.S3_ENDPOINT,
+            region: process.env.S3_REGION || 'us-east-1',
+            access_key_id: process.env.S3_ACCESS_KEY_ID,
+            secret_access_key: process.env.S3_SECRET_ACCESS_KEY,
+            // `false` makes the provider omit the ACL header entirely. That is the
+            // right default off AWS: self-hosted S3 servers commonly reject or
+            // ignore canned ACLs, and public reads come from a bucket policy
+            // instead. Set S3_FILE_ACL=public-read on AWS if you rely on
+            // per-object ACLs there.
+            acl: process.env.S3_FILE_ACL || false,
+            additional_client_config: {
+              // RustFS and most self-hosted S3 servers address buckets by path
+              // (endpoint/bucket), not as a subdomain the way AWS does.
+              forcePathStyle: process.env.S3_FORCE_PATH_STYLE !== 'false',
+            },
+          },
+        },
+      ]
+    : [
+        {
+          resolve: '@medusajs/medusa/file-local',
+          id: 'local',
+          options: {
+            // The local provider bakes this into every uploaded file URL.
+            // It must be the publicly reachable origin in production, or
+            // images resolve to localhost and render broken.
+            backend_url: process.env.FILE_BACKEND_URL || 'http://localhost:9000/static',
+          },
+        },
+      ]
+
 module.exports = withMercur({
   projectConfig: {
     databaseUrl: process.env.DATABASE_URL,
-    // OVERLAY 2/2 — Redis session store + worker mode.
+    // OVERLAY 2/4 — Redis session store + worker mode.
     // "shared" runs HTTP and background jobs in one process. docker-compose.yml
     // splits them: MEDUSA_WORKER_MODE=server on `backend`, `worker` on `worker`.
     ...(REDIS_URL ? { redisUrl: REDIS_URL } : {}),
@@ -129,25 +219,13 @@ module.exports = withMercur({
         path: '/seller',
       }
     },
-    // OVERLAY 1/2 (cont.) — spliced in ahead of the file module, same as the
+    // OVERLAY 1/4 (cont.) — spliced in ahead of the file module, same as the
     // Mercur development monorepo's own apps/api config does.
     ...redisModules,
     {
       resolve: '@medusajs/medusa/file',
-      options: {
-        providers: [
-          {
-            resolve: '@medusajs/medusa/file-local',
-            id: 'local',
-            options: {
-              // The local provider bakes this into every uploaded file URL.
-              // It must be the publicly reachable origin in production, or
-              // images resolve to localhost and render broken.
-              backend_url: process.env.FILE_BACKEND_URL || 'http://localhost:9000/static',
-            },
-          },
-        ],
-      },
+      // OVERLAY 4/4 (cont.) — local volume, or S3 when S3_FILE_BUCKET is set.
+      options: { providers: fileProviders },
     },
   ],
 })
