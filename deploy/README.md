@@ -436,12 +436,31 @@ token with a value published in this repository.
 ### Backing up and restoring
 
 Your database lives in the `postgres-data` volume. Losing that volume loses the
-marketplace, so take dumps somewhere else. These commands are run on the Dokploy
-host; substitute your own container name if you run more than one stack.
+marketplace, so take dumps somewhere else.
+
+> **Run these over SSH on the Dokploy server, not in Dokploy's Terminal.**
+> That Terminal puts you *inside a container*, which is the right place for
+> [Step 5](#step-5--create-your-admin-user) but the wrong place for anything
+> starting with `docker`. A container has no Docker CLI and its `node` user cannot
+> write to `/`, so the commands below fail like this:
+>
+> ```
+> node@1ef020691393:/$ docker exec ... pg_dump ...
+> bash: docker: command not found
+> bash: mercur-20260904-0800.dump: Permission denied
+> ```
+>
+> If you see that, you are in the container. `ssh` to the server itself and run it
+> there, from a directory you can write to such as your home directory. If you have
+> no SSH access to the host, skip to [Backing up to S3](#backing-up-to-s3-rustfs) —
+> the backup sidecar runs inside the stack and needs no host shell at all.
+
+Substitute your own container name if you run more than one stack.
 
 Back up:
 
 ```bash
+cd ~   # anywhere you can write; the redirect below creates the file here
 docker exec $(docker ps -qf name=postgres) pg_dump -U mercur -Fc mercur \
   > mercur-$(date +%Y%m%d-%H%M).dump
 ```
