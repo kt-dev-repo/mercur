@@ -35,7 +35,7 @@ without Stage 1 means hand-verifying payment code, which is the worst place to b
 # Stage 1 — Foundation
 
 No credentials needed. Buildable start to finish today.
-Progress: **0 / 20**
+Progress: **5 / 20**
 
 ## 1a. Regression tests for what actually broke
 
@@ -44,10 +44,10 @@ live at the same level.
 
 **Jest, in `packages/api` — fast, runs on every push:**
 
-- [ ] Seed runs twice against one database without failing
-- [ ] Second seed leaves store name and `supported_currencies` unchanged
-- [ ] Second seed creates no duplicate regions, tax regions or categories
-- [ ] `/admin/sellers` returns every seller; `/vendor/sellers` returns only the caller's
+- [x] Seed runs twice against one database without failing
+- [x] Second seed leaves store name and `supported_currencies` unchanged
+- [x] Second seed creates no duplicate regions, tax regions or categories
+- [x] `/admin/sellers` returns every seller; `/vendor/sellers` returns only the caller's
       — locks in the "missing store" behaviour as *intended*
 
 **Container smoke script (`deploy/smoke-test.sh`) — slower, runs on PR:**
@@ -69,7 +69,7 @@ shell script. Both are fast to check at container level.
 - [ ] Seller lifecycle — register → `pending_approval` → approve → `open`; suspend, reinstate
 - [ ] Catalogue — vendor creates a product, admin approves, vendor creates an offer
 - [ ] Multi-seller checkout — two sellers in one cart → one order group, one order each
-- [ ] **Scoping** — a vendor authenticated for seller A cannot read seller B's orders
+- [x] **Scoping** — a vendor authenticated for seller A cannot read seller B's orders
       (a security property, not a feature)
 
 ## 1c. CI
