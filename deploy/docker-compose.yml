@@ -103,6 +103,12 @@ services:
       S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
       S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+      # Email. `none` (default) sends nothing, `local` logs, `resend` delivers.
+      # See "Sending email" in deploy/README.md.
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-none}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM: ${RESEND_FROM:-}
+      RESEND_REPLY_TO: ${RESEND_REPLY_TO:-}
       STOREFRONT_REVALIDATE_URL: ${STOREFRONT_REVALIDATE_URL:-}
       STOREFRONT_REVALIDATE_SECRET: ${STOREFRONT_REVALIDATE_SECRET:-}
     volumes:
@@ -193,6 +199,12 @@ services:
       S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
       S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+      # Email. `none` (default) sends nothing, `local` logs, `resend` delivers.
+      # See "Sending email" in deploy/README.md.
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-none}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM: ${RESEND_FROM:-}
+      RESEND_REPLY_TO: ${RESEND_REPLY_TO:-}
     volumes:
       - uploads:/app/static
     stop_grace_period: 30s

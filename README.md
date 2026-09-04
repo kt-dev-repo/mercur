@@ -32,14 +32,20 @@ COOKIE_SECRET=your-super-secret-cookie-key
 4. Install dependencies, generate the route types, and start the dev server:
 
 ```bash
-bun install
-bun run codegen
-bun dev
+npm install --force
+npm run codegen
+npm run dev
 ```
 
-   `bun run codegen` is required once after a fresh install. It writes
+   Install with npm, not bun: neither bun linker produces the workspace-hoisted
+   `node_modules` layout Medusa needs, and the panels then fail to resolve their
+   dependencies at build time. `--force` is needed because the root pins
+   `react-hook-form@7.49.1` alongside `@hookform/resolvers@5.4.0`, which
+   peer-requires `^7.55.0`; see `deploy/Dockerfile` for the full reasoning.
+
+   `npm run codegen` is required once after a fresh install. It writes
    `packages/api/.mercur/routes.d.ts`, which both panels import as
-   `@acme/api/_generated`; without it `bun run build` fails with
+   `@acme/api/_generated`; without it `npm run build` fails with
    `Cannot find module '@acme/api/_generated'`. Re-run it whenever you change a
    route. It is not part of `build` because Turborepo builds the panels before
    `packages/api`, so it has to run ahead of the build graph.
@@ -119,7 +125,7 @@ Links define relationships between modules. See the [Links](https://docs.medusaj
 You can extend your project with pre-built blocks using the Mercur CLI:
 
 ```bash
-bunx @mercurjs/cli add block-name
+npx @mercurjs/cli add block-name
 ```
 
 Configure your block sources in `blocks.json`. Each alias is a destination root that
@@ -142,15 +148,54 @@ installed block files are written into:
 To build all apps and packages:
 
 ```bash
-bun run codegen   # once after install, or after changing a route
-bun run build
+npm run codegen   # once after install, or after changing a route
+npm run build
 ```
 
 To type-check every workspace without building:
 
 ```bash
-bun run check-types
+npm run check-types
 ```
+
+## Testing
+
+```bash
+npm run codegen                                    # once after install
+npm run check-types && npm run lint
+npm run test:unit --workspace @acme/api            # fast, no services needed
+npm run test:integration:http --workspace @acme/api
+```
+
+Integration tests boot a real Medusa app against a real database, so Postgres and Redis
+have to be running. The connection settings live in `packages/api/.env.test`, which is
+committed because the credentials are throwaway and CI uses the same file:
+
+```bash
+docker run -d --name mercur-test-pg -p 5433:5432 \
+  -e POSTGRES_USER=medusa -e POSTGRES_PASSWORD=medusa -e POSTGRES_DB=medusa-test postgres:16-alpine
+docker run -d --name mercur-test-redis -p 6380:6379 redis:7-alpine
+```
+
+Two things about the test runner are worth knowing before you write a test, because both
+present as a broken API rather than as what they are:
+
+- **It reads `DB_HOST` / `DB_PORT` / `DB_USERNAME` / `DB_PASSWORD`, not `DATABASE_URL`**,
+  to create and drop the per-run database. Set only `DATABASE_URL` and it silently tries
+  `localhost:5432` and dies with a bare `AggregateError`.
+- **It restores the database between `it` blocks.** Fixtures created in `beforeAll` survive
+  via a snapshot; anything created *inside* a test does not. A flow split across several
+  `it` blocks gives you a first test that passes and a second that 404s on the row the
+  first just created. Keep a flow that builds on itself in one test.
+
+The deployment has its own end-to-end suite — see [deploy/README.md](deploy/README.md).
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push: typecheck and lint, then the three test
+suites against Postgres and Redis service containers. Pull requests additionally run
+`deploy/smoke-test.sh`, which builds the image and drives a full stack — boot guards,
+both panels, a redeploy preserving data, backup round-trip, and the uploads migration.
 
 ## AI agents
 

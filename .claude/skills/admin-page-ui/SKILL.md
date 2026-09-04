@@ -149,7 +149,7 @@ A "general" section is the `Container` header row plus `SectionRow` pairs:
 All HTTP goes through the typed client in a TanStack Query hook. **No raw `fetch` in a
 page.** In this repository the client is exported as `client` from `src/lib/client.ts`
 (the upstream docs name it `sdk`). Route types come from `@acme/api/_generated`, which
-requires `bun run codegen` to have run.
+requires `npm run codegen` to have run.
 
 ```ts
 // src/hooks/api/reviews.ts
@@ -181,9 +181,9 @@ Do **not** copy a built-in page to change it. Pick the smallest surface:
 ## Verify
 
 - The route resolves at its derived path, and the sidebar entry appears when `config` is exported.
-- `bun run check-types` passes — a bad `zone`, `model`, or nav `id` fails type-check against
+- `npm run check-types` passes — a bad `zone`, `model`, or nav `id` fails type-check against
   the generated registry in `src/extension-targets.d.ts`.
-- `bun run lint` passes.
+- `npm run lint` passes.
 - Loading, empty, error and success states all render.
 
 ## Related

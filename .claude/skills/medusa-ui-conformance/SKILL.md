@@ -108,7 +108,7 @@ import { client } from "../../lib/client"
 
 ## Verify
 
-- `bun run lint` and `bun run check-types` pass in the app you touched.
+- `npm run lint` and `npm run check-types` pass in the app you touched.
 - No hex, `rgb()`, or raw palette class in the diff:
   `grep -nE "#[0-9a-fA-F]{3,6}|rgb\(|text-(gray|slate|zinc)-" <changed files>`
 - No Medusa-internal relative import in the diff:

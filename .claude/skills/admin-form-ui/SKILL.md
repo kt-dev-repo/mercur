@@ -167,9 +167,9 @@ export default function EditReviewPage() {
 ## Verify
 
 - The field renders in the target form, validates on submit, and the value survives a reload.
-- `bun run check-types` fails on a bad `model`, `zone`, or field `id` — that type-check
+- `npm run check-types` fails on a bad `model`, `zone`, or field `id` — that type-check
   against the generated registry is the real test. Try `zone: "nope"` and confirm it fails.
-- `bun run lint` passes.
+- `npm run lint` passes.
 
 ## Related
 

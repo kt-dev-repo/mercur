@@ -5,12 +5,13 @@
 // image only*. The upstream file stays untouched in Git so `git pull` / template
 // upgrades never conflict.
 //
-// It is a copy of the upstream config plus exactly four additions, each marked
+// It is a copy of the upstream config plus exactly five additions, each marked
 // with "OVERLAY:" below:
 //   1. the Redis-backed cache / event bus / workflow engine / locking modules
 //   2. `workerMode`, so the server and worker containers can be split
 //   3. an opt-out from Secure session cookies, for http-only deployments
 //   4. S3-compatible object storage for uploads, when a bucket is configured
+//   5. a notification provider, so the marketplace can actually send email
 //
 // >>> WHEN YOU UPGRADE MERCUR, RE-SYNC THIS FILE. <<<
 //   diff -u packages/api/medusa-config.ts deploy/medusa-config.production.ts
@@ -34,7 +35,7 @@ const dashboardAppDir = (name: string) => {
   return fs.existsSync(bundled) ? bundled : path.join(__dirname, `../../apps/${name}`)
 }
 
-// OVERLAY 1/4 — Redis.
+// OVERLAY 1/5 — Redis.
 // Required in production: the in-memory workflow engine loses in-flight workflow
 // state on every restart and cannot be shared between the server and worker
 // containers. Registered only when REDIS_URL is set, so this file still runs
@@ -77,7 +78,7 @@ const redisModules = REDIS_URL
     ]
   : []
 
-// OVERLAY 3/4 — session cookie security.
+// OVERLAY 3/5 — session cookie security.
 // Medusa's express-loader hardcodes `secure: true` on the session cookie whenever
 // NODE_ENV is production or staging, and express-session then silently declines to
 // send Set-Cookie on a request it does not consider secure. The symptom is precise
@@ -92,7 +93,7 @@ const redisModules = REDIS_URL
 // rebuild — the moment https works.
 const INSECURE_COOKIES = process.env.INSECURE_COOKIES === 'true'
 
-// OVERLAY 4/4 — where uploaded files live.
+// OVERLAY 4/5 — where uploaded files live.
 // FILE_STORAGE picks the provider for every upload: product images and videos,
 // seller logos and banners, anything a block adds later.
 //
@@ -140,6 +141,73 @@ if (FILE_STORAGE === 's3') {
   }
 }
 
+// OVERLAY 5/5 — sending email.
+// Without a notification provider the marketplace cannot send anything, and the failure
+// is silent rather than loud: Mercur's seller invitation builds its email, hands it to
+// the notification module, and it goes nowhere. The invite is created, the API returns
+// success, and the person is simply never told.
+//
+//   none (default)  no provider, exactly as before
+//   local           logs to the terminal — verifies the whole path with no account
+//   resend          real delivery through Resend
+//
+// One provider per channel is a Medusa constraint, so this is a choice, not a stack.
+const EMAIL_PROVIDER = process.env.EMAIL_PROVIDER || 'none'
+
+if (!['none', 'local', 'resend'].includes(EMAIL_PROVIDER)) {
+  throw new Error(
+    `EMAIL_PROVIDER must be "none", "local" or "resend", got "${EMAIL_PROVIDER}". ` +
+      'Refusing to guess: falling back to none here would leave email silently undelivered, ' +
+      'which is the exact failure this setting exists to fix.'
+  )
+}
+
+if (EMAIL_PROVIDER === 'resend') {
+  const missing = [
+    !process.env.RESEND_API_KEY && 'RESEND_API_KEY',
+    !process.env.RESEND_FROM && 'RESEND_FROM',
+  ].filter(Boolean)
+
+  if (missing.length) {
+    throw new Error(
+      `EMAIL_PROVIDER=resend but ${missing.join(', ')} ${missing.length > 1 ? 'are' : 'is'} not set. ` +
+        'RESEND_FROM must be an address on a domain verified in your Resend account; until you ' +
+        'verify one, only onboarding@resend.dev works and it can only reach the account owner.'
+    )
+  }
+}
+
+const notificationModules =
+  EMAIL_PROVIDER === 'none'
+    ? []
+    : [
+        {
+          resolve: '@medusajs/medusa/notification',
+          options: {
+            providers: [
+              EMAIL_PROVIDER === 'resend'
+                ? {
+                    // Resolved from the build artifact, where `medusa build` compiles
+                    // src/ to the same relative path.
+                    resolve: './src/modules/resend',
+                    id: 'resend',
+                    options: {
+                      channels: ['email'],
+                      api_key: process.env.RESEND_API_KEY,
+                      from: process.env.RESEND_FROM,
+                      reply_to: process.env.RESEND_REPLY_TO,
+                    },
+                  }
+                : {
+                    resolve: '@medusajs/medusa/notification-local',
+                    id: 'local',
+                    options: { channels: ['email'] },
+                  },
+            ],
+          },
+        },
+      ]
+
 const fileProviders =
   FILE_STORAGE === 's3'
     ? [
@@ -184,7 +252,7 @@ const fileProviders =
 module.exports = withMercur({
   projectConfig: {
     databaseUrl: process.env.DATABASE_URL,
-    // OVERLAY 2/4 — Redis session store + worker mode.
+    // OVERLAY 2/5 — Redis session store + worker mode.
     // "shared" runs HTTP and background jobs in one process. docker-compose.yml
     // splits them: MEDUSA_WORKER_MODE=server on `backend`, `worker` on `worker`.
     ...(REDIS_URL ? { redisUrl: REDIS_URL } : {}),
@@ -219,13 +287,15 @@ module.exports = withMercur({
         path: '/seller',
       }
     },
-    // OVERLAY 1/4 (cont.) — spliced in ahead of the file module, same as the
+    // OVERLAY 1/5 (cont.) — spliced in ahead of the file module, same as the
     // Mercur development monorepo's own apps/api config does.
     ...redisModules,
     {
       resolve: '@medusajs/medusa/file',
-      // OVERLAY 4/4 (cont.) — local volume, or S3 when S3_FILE_BUCKET is set.
+      // OVERLAY 4/5 (cont.) — local volume, or S3 when S3_FILE_BUCKET is set.
       options: { providers: fileProviders },
     },
+    // OVERLAY 5/5 (cont.) — empty unless EMAIL_PROVIDER selects one.
+    ...notificationModules,
   ],
 })

@@ -156,6 +156,19 @@ assert_contains "$(config_loads -e FILE_STORAGE=s3 -e S3_FILE_BUCKET=b -e S3_ACC
 assert_contains "$(config_loads -e FILE_STORAGE=s3 -e S3_FILE_BUCKET=b -e S3_FILE_PUBLIC_URL=http://x/y -e S3_ACCESS_KEY_ID=k -e S3_SECRET_ACCESS_KEY=s)" \
   "LOADED" "a fully configured s3 setup loads"
 
+assert_contains "$(config_loads)" "LOADED" \
+  "EMAIL_PROVIDER unset defaults to none and loads"
+assert_contains "$(config_loads -e EMAIL_PROVIDER=local)" "LOADED" \
+  "EMAIL_PROVIDER=local loads"
+assert_contains "$(config_loads -e EMAIL_PROVIDER=nonsense)" 'must be "none", "local" or "resend"' \
+  "an unrecognised EMAIL_PROVIDER is refused, not silently treated as none"
+
+e=$(config_loads -e EMAIL_PROVIDER=resend)
+assert_contains "$e" "RESEND_API_KEY" "EMAIL_PROVIDER=resend with nothing else names RESEND_API_KEY"
+assert_contains "$e" "RESEND_FROM" "...and names RESEND_FROM"
+assert_contains "$(config_loads -e EMAIL_PROVIDER=resend -e RESEND_API_KEY=re_x -e RESEND_FROM=a@b.com)" \
+  "LOADED" "a fully configured resend setup loads"
+
 # ---------------------------------------------------------------------------
 step "First deploy"
 

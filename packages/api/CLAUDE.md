@@ -86,4 +86,15 @@ After non-trivial backend changes, verify the smallest relevant set:
 - `test:unit` for local utility or service logic
 - `codegen` when generated types changed, then `check-types` in the panels that consume them
 
+### Where tests live
+
+- `integration-tests/http/*.spec.ts` — boot a real app via `medusaIntegrationTestRunner`
+- `src/**/__tests__/*.unit.spec.ts` — plain unit tests, no services required
+
+Integration tests need Postgres and Redis; settings are in the committed
+`packages/api/.env.test`. The runner reads `DB_HOST`/`DB_PORT`/`DB_USERNAME`/`DB_PASSWORD`
+to create its per-run database — **not** `DATABASE_URL` — and it restores the database
+between `it` blocks, so a flow that builds on itself belongs in a single test. Both
+mistakes look like a broken API rather than a test-harness detail.
+
 If a block was installed, also verify the files landed in the expected `src/*` locations.
