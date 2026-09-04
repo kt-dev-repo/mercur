@@ -1,7 +1,13 @@
 # Development plan — Foundation, then Go-live
 
-Status: **approved, not started**. Branch base: `feat/file-storage-s3` @ `dacbc27`.
+Status: **Stage 1 in progress — 19 of 20 done.** Based on `main`.
 See `PLAN-file-storage.md` for the storage work this builds on.
+
+Stage 1 landed so far: regression tests for the seed and seller scoping, GitHub Actions
+running typecheck/lint and three jest suites, a 33-assertion container smoke suite on
+pull requests, a backup restore drill, and flow coverage of the seller lifecycle and the
+product approval pipeline. Remaining: multi-seller checkout. Stage 2 has not started and
+needs Stripe test keys and an email provider to finish.
 
 ## Context
 
