@@ -47,6 +47,22 @@ module.exports = withMercur({
       }
     },
     {
+      // Email. The local provider logs each message instead of sending it, which is what
+      // you want in development and what the integration tests assert against. Production
+      // swaps this for a real provider via EMAIL_PROVIDER — see
+      // deploy/medusa-config.production.ts.
+      resolve: '@medusajs/medusa/notification',
+      options: {
+        providers: [
+          {
+            resolve: '@medusajs/medusa/notification-local',
+            id: 'local',
+            options: { channels: ['email'] },
+          },
+        ],
+      },
+    },
+    {
       resolve: '@medusajs/medusa/file',
       options: {
         providers: [

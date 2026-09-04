@@ -433,6 +433,49 @@ without them, and `entrypoint.sh` refuses again for any other way the image is r
 Unset, Medusa would fall back to the literal `supersecret` and sign every session
 token with a value published in this repository.
 
+### Sending email
+
+Out of the box the marketplace sends nothing, and it fails quietly. Inviting a seller
+creates the invitation, returns `201`, and never tells the person — because no
+notification provider is configured and, in Mercur 2.3.3, nothing connects the invite
+event to the code that sends the email. Both halves are fixed here: this project adds the
+missing subscriber, and `EMAIL_PROVIDER` chooses who delivers.
+
+```
+EMAIL_PROVIDER=none      # the default. Sends nothing.
+EMAIL_PROVIDER=local     # logs the email to the container output.
+EMAIL_PROVIDER=resend    # real delivery.
+```
+
+**Start with `local`.** It exercises the entire path — invite, event, subscriber,
+notification module, provider — without an account, and the email appears in the backend
+logs. If you see it there, only delivery is left to configure.
+
+**Then Resend.** Create an account, take an API key, and set:
+
+```
+EMAIL_PROVIDER=resend
+RESEND_API_KEY=re_...
+RESEND_FROM=marketplace@your-domain.com
+```
+
+Then **Rebuild** — the config is compiled into the image.
+
+> **Resend will only email you until you verify a domain.** A new account can send from
+> `onboarding@resend.dev` to the address that owns the account, and nowhere else. That is
+> enough to prove the wiring and useless for real invitations. Add your domain in Resend
+> and publish the DNS records it gives you; `RESEND_FROM` must then be an address on that
+> domain, or the API rejects the send *after* the invitation has already been created.
+> The DNS step is the slow one, so start it before you need it.
+
+`RESEND_REPLY_TO` is optional, for when replies should go somewhere other than the From
+address.
+
+**What actually sends today:** the seller invitation, and nothing else. Password resets
+and order confirmations do not exist yet — Medusa emits the events but nothing listens,
+so each needs a subscriber and a template written. Configuring a provider does not create
+those emails; it makes the one that exists arrive.
+
 ### Backing up and restoring
 
 Your database lives in the `postgres-data` volume. Losing that volume loses the
@@ -914,6 +957,9 @@ Run against Podman using the same command Dokploy issues:
 | Wrecked database fully restored from a RustFS dump | pass |
 | S3 unreachable for two intervals: logs, retries, 0 restarts, self-recovers | pass |
 | A not-yet-migrated database is skipped, not stored as an empty backup | pass |
+| `EMAIL_PROVIDER` unset/`local` load; `resend` without keys refuses, naming each | pass |
+| An unrecognised `EMAIL_PROVIDER` refuses rather than defaulting to none | pass |
+| Inviting a seller member produces a notification to that address | pass |
 | `backup drill` restores the newest dump to a scratch database and passes | pass |
 | The drill reports post-backup drift without failing on it | pass |
 | The legacy seed marker is written, so a rollback to `main` will not re-seed | pass |
