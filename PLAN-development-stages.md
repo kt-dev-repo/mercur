@@ -35,7 +35,7 @@ without Stage 1 means hand-verifying payment code, which is the worst place to b
 # Stage 1 — Foundation
 
 No credentials needed. Buildable start to finish today.
-Progress: **5 / 20**
+Progress: **7 / 20**
 
 ## 1a. Regression tests for what actually broke
 
@@ -74,8 +74,8 @@ shell script. Both are fast to check at container level.
 
 ## 1c. CI
 
-- [ ] `.github/workflows/ci.yml` — job 1: `npm ci` → **`npm run codegen` first** → `check-types` → `lint`
-- [ ] Job 2: Postgres + Redis services, populate the empty `packages/api/.env.test`, run all three jest modes
+- [x] `.github/workflows/ci.yml` — job 1: `npm ci` → **`npm run codegen` first** → `check-types` → `lint`
+- [x] Job 2: Postgres + Redis services, populate the empty `packages/api/.env.test`, run all three jest modes
 - [ ] Job 3: build the image and run `deploy/smoke-test.sh` — **pull requests only** (~8 min)
 
 ## 1d. Restore drill and proof

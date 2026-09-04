@@ -79,8 +79,9 @@ medusaIntegrationTestRunner({
         const after = await listStore()
 
         expect(after.name).toEqual("Operator Renamed This")
+        expect(after.supported_currencies).toBeDefined()
         expect(
-          after.supported_currencies.map((c) => c.currency_code).sort()
+          after.supported_currencies!.map((c) => c.currency_code).sort()
         ).toEqual(["eur", "thb", "usd"])
 
         // Nothing duplicated. Each of these was created by the first seed and must be

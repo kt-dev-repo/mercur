@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # npm, not bun, for installing — the same reasoning as deploy/Dockerfile. Neither bun
+  # linker produces the node_modules layout Medusa needs. bun is still installed below
+  # because Turborepo reads `packageManager` from package.json and spawns tasks with that
+  # binary; without it every turbo task dies on "cannot find binary path".
+  BUN_VERSION: 1.3.11
+  NODE_VERSION: 22
+
+jobs:
+  checks:
+    name: Typecheck and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      # --force, not --legacy-peer-deps: the root pins react-hook-form@7.49.1 alongside
+      # @hookform/resolvers@5.4.0, which peer-requires ^7.55.0, so a strict install fails
+      # with ERESOLVE. See deploy/Dockerfile for why the two flags are not interchangeable.
+      - run: npm ci --force --no-audit --no-fund
+
+      # Must run before check-types. It writes packages/api/.mercur/routes.d.ts, which both
+      # panels import as @acme/api/_generated; without it they fail with
+      # "Cannot find module '@acme/api/_generated'". It cannot live in the build graph
+      # because Turborepo builds the panels before packages/api.
+      - run: npm run codegen
+
+      - run: npm run check-types
+      - run: npm run lint
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    services:
+      # Ports match packages/api/.env.test, which is committed so the same file works
+      # locally and here.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: medusa
+          POSTGRES_PASSWORD: medusa
+          POSTGRES_DB: medusa-test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - run: npm ci --force --no-audit --no-fund
+      - run: npm run codegen
+
+      # The integration runner creates and drops a database per run, and reads
+      # DB_HOST/DB_PORT/DB_USERNAME/DB_PASSWORD to do it — not DATABASE_URL. Those live in
+      # packages/api/.env.test alongside the DATABASE_URL the app itself boots with.
+      - name: Integration tests (http)
+        run: npm run test:integration:http --workspace @acme/api
+
+      - name: Integration tests (modules)
+        run: npm run test:integration:modules --workspace @acme/api
+
+      - name: Unit tests
+        run: npm run test:unit --workspace @acme/api
