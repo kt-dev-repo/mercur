@@ -48,13 +48,19 @@ If a block touches backend code, inspect:
 
 Run these from `packages/api` unless noted otherwise:
 - `dev`
-- `dev:codegen`
+- `codegen`
 - `build`
+- `check-types`
 - `test:integration:http`
 - `test:integration:modules`
 - `test:unit`
 
 ## Codegen
+
+`codegen` (`mercurjs codegen`) writes `.mercur/routes.d.ts`, which both panels import
+as `@acme/api/_generated`. It must run once after a fresh install, before any panel
+`build` or `check-types` — Turborepo builds the panels ahead of this package, so it
+cannot be part of the build graph. The repository root exposes it as `npm run codegen`.
 
 Run route codegen when a task changes:
 - route paths
@@ -78,6 +84,6 @@ After non-trivial backend changes, verify the smallest relevant set:
 - `test:integration:http` for changed route behavior
 - `test:integration:modules` for module-level behavior
 - `test:unit` for local utility or service logic
-- `dev:codegen` or equivalent codegen verification when generated types changed
+- `codegen` when generated types changed, then `check-types` in the panels that consume them
 
 If a block was installed, also verify the files landed in the expected `src/*` locations.

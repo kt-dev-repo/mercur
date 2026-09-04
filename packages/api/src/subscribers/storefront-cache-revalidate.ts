@@ -82,15 +82,29 @@ export default async function storefrontCacheRevalidateHandler({
     return
   }
 
+  // Without a deadline a hung storefront pins this subscriber open for as long as
+  // the platform's default socket timeout allows, on every product event.
+  const REVALIDATE_TIMEOUT_MS = 5000
+
   try {
-    await fetch(url, {
+    const response = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "x-revalidate-secret": secret,
       },
       body: JSON.stringify({ tags: [...tagSet] }),
+      signal: AbortSignal.timeout(REVALIDATE_TIMEOUT_MS),
     })
+
+    // fetch only rejects on transport failure. A wrong secret (401) or a broken
+    // storefront route (500) resolves normally, so without this check the cache
+    // silently goes stale and nothing anywhere reports it.
+    if (!response.ok) {
+      console.error(
+        `[storefront-cache-revalidate] revalidation rejected: ${response.status} ${response.statusText}`
+      )
+    }
   } catch (error) {
     console.error("[storefront-cache-revalidate] revalidation failed:", error)
   }

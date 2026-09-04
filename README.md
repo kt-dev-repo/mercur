@@ -17,7 +17,6 @@ If you've already cloned this repo, skip to [Development](#development).
 2. Copy the example environment variables:
 
 ```bash
-cd my-project
 cp packages/api/.env.template packages/api/.env
 ```
 
@@ -30,16 +29,28 @@ JWT_SECRET=your-super-secret-jwt-key
 COOKIE_SECRET=your-super-secret-cookie-key
 ```
 
-4. Install dependencies and start the dev server:
+4. Install dependencies, generate the route types, and start the dev server:
 
 ```bash
 bun install
+bun run codegen
 bun dev
 ```
 
+   `bun run codegen` is required once after a fresh install. It writes
+   `packages/api/.mercur/routes.d.ts`, which both panels import as
+   `@acme/api/_generated`; without it `bun run build` fails with
+   `Cannot find module '@acme/api/_generated'`. Re-run it whenever you change a
+   route. It is not part of `build` because Turborepo builds the panels before
+   `packages/api`, so it has to run ahead of the build graph.
+
 5. Open `http://localhost:9000` to access the Medusa backend
 6. Open `http://localhost:7000` to access the admin dashboard
-6. Open `http://localhost:7001` to access the vendor dashboard
+7. Open `http://localhost:7001` to access the vendor dashboard
+
+   The backend also serves both panels: the admin panel at
+   `http://localhost:9000/dashboard` and the vendor panel at
+   `http://localhost:9000/seller`.
 
 That's it! Follow the on-screen instructions to login and create your first admin user.
 
@@ -111,15 +122,16 @@ You can extend your project with pre-built blocks using the Mercur CLI:
 bunx @mercurjs/cli add block-name
 ```
 
-Configure your block sources in `blocks.json`:
+Configure your block sources in `blocks.json`. Each alias is a destination root that
+installed block files are written into:
 
 ```json
 {
+  "$schema": "https://registry.mercurjs.com/registry.json",
   "aliases": {
-    "workflows": "packages/api/src/workflows",
-    "links": "packages/api/src/links",
-    "api": "packages/api/src/api",
-    "modules": "packages/api/src/modules"
+    "api": "packages/api/src",
+    "vendor": "apps/vendor/src",
+    "admin": "apps/admin/src"
   },
   "registries": {}
 }
@@ -130,7 +142,14 @@ Configure your block sources in `blocks.json`:
 To build all apps and packages:
 
 ```bash
+bun run codegen   # once after install, or after changing a route
 bun run build
+```
+
+To type-check every workspace without building:
+
+```bash
+bun run check-types
 ```
 
 ## AI agents

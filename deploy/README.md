@@ -260,6 +260,15 @@ working default: `DATABASE_URL` (below), `TRAEFIK_CERTRESOLVER` and
 one host), `FILE_BACKEND_URL`, and the storefront hooks `MERCUR_VENDOR_URL`,
 `STOREFRONT_REVALIDATE_URL` and `STOREFRONT_REVALIDATE_SECRET`.
 
+The four `*_CORS` values each fall back to `MERCUR_BACKEND_URL`, so the panels work
+even if you omit them. Set them explicitly anyway: they are what you edit when you
+move to `https` and when you add a storefront origin.
+
+`JWT_SECRET` and `COOKIE_SECRET` are checked twice — Compose refuses to start
+without them, and `entrypoint.sh` refuses again for any other way the image is run.
+Unset, Medusa would fall back to the literal `supersecret` and sign every session
+token with a value published in this repository.
+
 ### Using a managed database
 
 Set `DATABASE_URL` yourself and the bundled Postgres is ignored. Always include

@@ -72,10 +72,14 @@ services:
       REDIS_URL: redis://redis:6379
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
       COOKIE_SECRET: ${COOKIE_SECRET:?set COOKIE_SECRET}
-      STORE_CORS: ${STORE_CORS}
-      ADMIN_CORS: ${ADMIN_CORS}
-      VENDOR_CORS: ${VENDOR_CORS}
-      AUTH_CORS: ${AUTH_CORS}
+      # Default to the panels' own origin. The bundled panels are same-origin with
+      # the API, so they work either way, but an empty value silently breaks every
+      # cross-origin caller (your storefront) long after the deploy looks healthy.
+      # Add the storefront origin to STORE_CORS and AUTH_CORS once it exists.
+      STORE_CORS: ${STORE_CORS:-${MERCUR_BACKEND_URL}}
+      ADMIN_CORS: ${ADMIN_CORS:-${MERCUR_BACKEND_URL}}
+      VENDOR_CORS: ${VENDOR_CORS:-${MERCUR_BACKEND_URL}}
+      AUTH_CORS: ${AUTH_CORS:-${MERCUR_BACKEND_URL}}
       FILE_BACKEND_URL: ${FILE_BACKEND_URL:-${MERCUR_BACKEND_URL}/static}
       MERCUR_VENDOR_URL: ${MERCUR_VENDOR_URL:-${MERCUR_BACKEND_URL}/seller}
       STOREFRONT_REVALIDATE_URL: ${STOREFRONT_REVALIDATE_URL:-}
@@ -150,10 +154,10 @@ services:
       REDIS_URL: redis://redis:6379
       JWT_SECRET: ${JWT_SECRET}
       COOKIE_SECRET: ${COOKIE_SECRET}
-      STORE_CORS: ${STORE_CORS}
-      ADMIN_CORS: ${ADMIN_CORS}
-      VENDOR_CORS: ${VENDOR_CORS}
-      AUTH_CORS: ${AUTH_CORS}
+      STORE_CORS: ${STORE_CORS:-${MERCUR_BACKEND_URL}}
+      ADMIN_CORS: ${ADMIN_CORS:-${MERCUR_BACKEND_URL}}
+      VENDOR_CORS: ${VENDOR_CORS:-${MERCUR_BACKEND_URL}}
+      AUTH_CORS: ${AUTH_CORS:-${MERCUR_BACKEND_URL}}
       FILE_BACKEND_URL: ${FILE_BACKEND_URL:-${MERCUR_BACKEND_URL}/static}
       MERCUR_VENDOR_URL: ${MERCUR_VENDOR_URL:-${MERCUR_BACKEND_URL}/seller}
     volumes:

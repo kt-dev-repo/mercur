@@ -242,6 +242,11 @@ export default async function seedDemoData({ container }: ExecArgs) {
 
   logger.info("Seeding store data...");
   const [store] = await storeModuleService.listStores();
+  if (!store) {
+    throw new Error(
+      "No store found. Run `medusa db:migrate` before seeding — migrations create the default store."
+    );
+  }
   let defaultSalesChannel = await salesChannelModuleService.listSalesChannels({
     name: "Default Sales Channel",
   });
@@ -985,7 +990,17 @@ export default async function seedDemoData({ container }: ExecArgs) {
     const basePrice = priceByHandle.get(product.handle) ?? 50;
 
     // At least one seller always carries the product; the rest are random.
-    const shuffledSellers = [...sellers].sort(() => rand() - 0.5);
+    // Fisher-Yates, not `sort(() => rand() - 0.5)`: an inconsistent comparator
+    // gives an engine-dependent, heavily biased order, so the demo catalog would
+    // cluster on whichever seller happens to sort first.
+    const shuffledSellers = [...sellers];
+    for (let i = shuffledSellers.length - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [shuffledSellers[i], shuffledSellers[j]] = [
+        shuffledSellers[j],
+        shuffledSellers[i],
+      ];
+    }
     const participantCount = randInt(1, sellers.length);
     const participants = shuffledSellers.slice(0, participantCount);
 

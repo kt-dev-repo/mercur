@@ -7,7 +7,8 @@
     "dev": "vite --port 7001",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview --port 7001"
+    "preview": "vite preview --port 7001",
+    "check-types": "tsc -b"
   },
   "dependencies": {
     "@mercurjs/vendor": "2.3.3",

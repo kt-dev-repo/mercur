@@ -37,11 +37,23 @@ It covers the domain model (sellers, products, offers, attributes, commissions, 
 ## Getting Started
 
 ```bash
+bun install
+bun run codegen   # required once after install, and after any route change
 bun run dev
 ```
+
+`codegen` writes `packages/api/.mercur/routes.d.ts`. Both panels import their route
+types from `@acme/api/_generated`, which resolves to that file, so `build` and
+`check-types` fail with `Cannot find module '@acme/api/_generated'` until it exists.
+It cannot run as part of `build`: Turborepo builds the panels *before* `packages/api`
+(they are its `^build` dependencies), so codegen has to happen ahead of the graph.
 
 This starts:
 
 - Backend API at `http://localhost:9000`
-- Admin Panel at `http://localhost:9000/seller`
-- Vendor Panel at `http://localhost:9000/dashboard`
+- Admin Panel at `http://localhost:9000/dashboard` (standalone Vite dev server on `http://localhost:7000`)
+- Vendor Panel at `http://localhost:9000/seller` (standalone Vite dev server on `http://localhost:7001`)
+
+The panel paths come from the `admin-ui` and `vendor-ui` module options in
+`packages/api/medusa-config.ts`; `packages/api/scripts/bundle-dashboards.mjs`
+must be kept in sync with them.

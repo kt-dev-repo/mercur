@@ -1,6 +1,6 @@
 # Custom Pages
 
-A custom page lets you add new views to the vendor portal. Pages are automatically discovered using file-based routing powered by the `@mercurjs/dashboard-sdk` Vite plugin.
+A custom page lets you add new views to the admin panel. Pages are automatically discovered using file-based routing powered by the `@mercurjs/dashboard-sdk` Vite plugin.
 
 > Learn more about the dashboard SDK in the [Mercur documentation](https://docs.mercurjs.com).
 
