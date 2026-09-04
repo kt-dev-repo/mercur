@@ -99,6 +99,13 @@ medusaIntegrationTestRunner({
           channel: "email",
           template: "newSellerInvitation",
         })
+
+        // The row alone is not enough. createNotifications persists the notification
+        // before handing it to a provider, so with no provider configured the row still
+        // appears and every assertion above passes while nothing is delivered — the exact
+        // silent failure this whole change exists to fix. `status` is what distinguishes
+        // "sent" from "recorded": it is 'failure' when no provider could take it.
+        expect(sent![0].status).toEqual("success")
       })
 
       const waitFor = async <T>(

@@ -3,7 +3,6 @@ import {
   MedusaError,
 } from "@medusajs/framework/utils"
 import { Logger, NotificationTypes } from "@medusajs/framework/types"
-import { Resend } from "resend"
 
 type InjectedDependencies = { logger: Logger }
 
@@ -16,23 +15,33 @@ export type ResendNotificationOptions = {
    * which in turn can only deliver to the address that owns the account.
    */
   from: string
-  /** Optional Reply-To for replies from sellers and customers. */
+  /** Optional Reply-To, for replies from sellers and customers. */
   reply_to?: string
+  /** Overridable for tests. */
+  base_url?: string
 }
+
+const RESEND_API = "https://api.resend.com"
+const SEND_TIMEOUT_MS = 10_000
 
 /**
  * Sends the marketplace's transactional email through Resend.
  *
- * Mercur builds its own message bodies: sendSellerInvitationEmailStep calls
- * createNotifications with `content.subject` and `content.html` already rendered, and
- * passes `template` and `data` alongside for providers that would rather do their own
- * templating. This one takes what it is given, which keeps the email's wording in the
- * package that owns the feature rather than split across two repositories.
+ * Deliberately talks to the REST API with `fetch` rather than using the `resend` SDK.
+ * The SDK peer-depends on @react-email/render, which pulls react-dom 19 and therefore
+ * react 19, and this project pins react 18.3.1 for the panels. That conflict is
+ * survivable in the builder stage, which already installs with --force for unrelated
+ * reasons, but the runtime artifact installs without it and fails outright with
+ * ERESOLVE. Sending an email is one POST; it is not worth a react-version conflict, a
+ * larger image, or weakening the artifact install.
+ *
+ * Mercur builds its own message bodies — sendSellerInvitationEmailStep passes
+ * `content.subject` and `content.html` already rendered — so this takes what it is given
+ * rather than templating anything.
  */
 export class ResendNotificationService extends AbstractNotificationProviderService {
   static identifier = "resend"
 
-  private client: Resend
   private options: ResendNotificationOptions
   private logger: Logger
 
@@ -40,19 +49,17 @@ export class ResendNotificationService extends AbstractNotificationProviderServi
     super()
     this.options = options
     this.logger = logger
-    this.client = new Resend(options.api_key)
   }
 
   /**
-   * Medusa calls this to fail fast at boot rather than at send time. Without it a
-   * missing key surfaces the first time someone invites a seller — by which point the
-   * invitation row exists and the person is expecting an email.
+   * Medusa calls this at boot so a misconfiguration surfaces on startup rather than the
+   * first time somebody invites a seller — by which point the invitation exists and the
+   * person is expecting an email.
    */
   static validateOptions(options: Record<string, unknown>) {
-    const missing = [
-      !options.api_key && "api_key",
-      !options.from && "from",
-    ].filter(Boolean)
+    const missing = [!options.api_key && "api_key", !options.from && "from"].filter(
+      Boolean
+    )
 
     if (missing.length) {
       throw new MedusaError(
@@ -76,8 +83,8 @@ export class ResendNotificationService extends AbstractNotificationProviderServi
     const html = notification.content?.html
 
     // Refuse rather than send an empty message. A blank email is worse than none: the
-    // recipient gets something useless, and every layer above reports success, so the
-    // failure only surfaces as a confused person asking why their invitation is empty.
+    // recipient gets something useless and every layer above reports success, so the
+    // failure surfaces only as a confused person asking why their invitation is empty.
     if (!subject || !html) {
       throw new MedusaError(
         MedusaError.Types.INVALID_DATA,
@@ -87,30 +94,60 @@ export class ResendNotificationService extends AbstractNotificationProviderServi
       )
     }
 
-    const { data, error } = await this.client.emails.send({
-      from: this.options.from,
-      to: [notification.to],
-      subject,
-      html: html as string,
-      ...(this.options.reply_to ? { replyTo: this.options.reply_to } : {}),
-    })
+    const base = this.options.base_url ?? RESEND_API
 
-    // The SDK reports failures in the response rather than by throwing, so without this
-    // check a rejected send returns cleanly and the notification is recorded as sent.
-    if (error) {
+    let response: Response
+    try {
+      response = await fetch(`${base}/emails`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.options.api_key}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from: this.options.from,
+          to: [notification.to],
+          subject,
+          html,
+          // The REST API uses snake_case here; the SDK's camelCase `replyTo` is silently
+          // ignored by it.
+          ...(this.options.reply_to ? { reply_to: this.options.reply_to } : {}),
+        }),
+        // Without a deadline a hung API pins this handler open on every send.
+        signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
+      })
+    } catch (error) {
+      const message = (error as Error).message
       this.logger.error(
-        `[resend] failed to send "${notification.template}" to ${notification.to}: ${error.message}`
+        `[resend] could not reach the API for "${notification.template}" to ${notification.to}: ${message}`
       )
       throw new MedusaError(
         MedusaError.Types.UNEXPECTED_STATE,
-        `Resend rejected the email: ${error.message}`
+        `Could not reach Resend: ${message}`
       )
     }
 
+    // fetch only rejects on transport failure, so a rejected send — an unverified From
+    // address is the common one — arrives here as a perfectly ordinary response. Without
+    // this check it would be recorded as delivered.
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "")
+      this.logger.error(
+        `[resend] rejected "${notification.template}" to ${notification.to}: ` +
+          `${response.status} ${detail}`
+      )
+      throw new MedusaError(
+        MedusaError.Types.UNEXPECTED_STATE,
+        `Resend rejected the email (${response.status}): ${detail}`
+      )
+    }
+
+    const body = (await response.json().catch(() => ({}))) as { id?: string }
+
     this.logger.info(
-      `[resend] sent "${notification.template}" to ${notification.to} (id ${data?.id})`
+      `[resend] sent "${notification.template}" to ${notification.to} (id ${body.id})`
     )
 
-    return { id: data?.id }
+    return { id: body.id }
   }
 }
