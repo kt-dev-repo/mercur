@@ -57,3 +57,34 @@ This starts:
 The panel paths come from the `admin-ui` and `vendor-ui` module options in
 `packages/api/medusa-config.ts`; `packages/api/scripts/bundle-dashboards.mjs`
 must be kept in sync with them.
+
+## Verifying a change
+
+```bash
+npm run codegen && npm run check-types && npm run lint
+npm run test:unit --workspace @acme/api
+npm run test:integration:http --workspace @acme/api   # needs Postgres + Redis
+```
+
+CI runs all of this on every push, and `deploy/smoke-test.sh` — the end-to-end check for
+the deployment — on pull requests. See the repository README for how to start the test
+databases.
+
+Two properties of the Medusa test runner mislead you if you do not know them. Both look
+like a broken API rather than what they are:
+
+- It reads **`DB_HOST` / `DB_PORT` / `DB_USERNAME` / `DB_PASSWORD`**, not `DATABASE_URL`,
+  to create the per-run database. Set only `DATABASE_URL` and it tries `localhost:5432`
+  and fails with a bare `AggregateError`.
+- It **restores the database between `it` blocks**. `beforeAll` fixtures survive via a
+  snapshot; rows created inside a test do not. Split a flow across several tests and the
+  second one 404s on what the first just created. Keep such a flow in one `it`.
+
+## Changing anything under `deploy/`
+
+`deploy/` holds a Dockerfile, a Compose stack, a production config overlay, a backup
+sidecar and the smoke suite. `deploy/README.md` is the operator-facing guide and is
+expected to stay accurate — several defects in this project were documentation drifting
+away from behaviour, not code. If you change a setting, change the guide and
+`deploy/.env.example` in the same commit, and add an assertion to `deploy/smoke-test.sh`
+if the change has a failure mode worth catching.

@@ -362,6 +362,7 @@ Everything below is background. You do not need it to deploy.
 | `prepare-artifact.mjs` | Build-time fixups so the runtime image installs cleanly |
 | `.env.example` | The Step 3 block, plus the optional settings listed below |
 | `backup/` | The S3 sidecar — scheduled `pg_dump` to RustFS/S3, and the uploads migration |
+| `smoke-test.sh` | The end-to-end check for this stack; run by CI on every pull request |
 
 The upstream project is left untouched. Every deployment file lives in this
 folder, so pulling a newer Mercur never conflicts with it. The production config
@@ -901,6 +902,19 @@ The only differences should be the blocks marked `OVERLAY:` — Redis and
 across and rebuild. If a future release adds Redis to the template itself, delete
 the overlay and the `COPY deploy/medusa-config.production.ts` line from the
 Dockerfile.
+
+### Running the checks yourself
+
+Everything in the table below is a script, not a description:
+
+```bash
+./deploy/smoke-test.sh                 # builds, then runs the whole suite (~15 min)
+SKIP_BUILD=1 ./deploy/smoke-test.sh    # reuse the images already tagged (~7 min)
+KEEP=1 ./deploy/smoke-test.sh          # leave the stack up afterwards to poke at
+```
+
+It works against Docker or Podman, and CI runs it on every pull request. The backend
+tests live in `packages/api` and are described in the repository README.
 
 ### What was tested
 

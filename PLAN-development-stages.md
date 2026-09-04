@@ -1,13 +1,16 @@
 # Development plan — Foundation, then Go-live
 
-Status: **Stage 1 in progress — 19 of 20 done.** Based on `main`.
+Status: **Stage 1 — 19 of 20 done; Stage 2 email underway.** Based on `main`.
 See `PLAN-file-storage.md` for the storage work this builds on.
 
 Stage 1 landed so far: regression tests for the seed and seller scoping, GitHub Actions
 running typecheck/lint and three jest suites, a 33-assertion container smoke suite on
 pull requests, a backup restore drill, and flow coverage of the seller lifecycle and the
-product approval pipeline. Remaining: multi-seller checkout. Stage 2 has not started and
-needs Stripe test keys and an email provider to finish.
+product approval pipeline. Remaining: multi-seller checkout.
+
+Counts below reflect what is on `main` plus this branch. Stage 2 has started: seller
+invitation email goes out through Resend, and real delivery still needs an API key and a
+verified domain. Stripe test keys are still outstanding.
 
 ## Context
 
@@ -100,7 +103,7 @@ shell script. Both are fast to check at container level.
 
 Needs credentials, but **not paid ones**: Stripe test-mode keys and a free email tier
 unblock all of it, and both are available immediately.
-Progress: **0 / 9**
+Progress: **4 / 13**
 
 ## 2a. Stripe Connect — payments and payouts
 
@@ -121,9 +124,24 @@ Confirmed against Mercur's integration documentation, not recalled.
 
 ## 2b. Notifications — email
 
-- [ ] `EMAIL_PROVIDER=none|local|sendgrid` switch, default `none`; `channels: ["email"]`
-      (only one provider per channel). Verify wiring with `notification-local` first.
-- [ ] Templates that matter: seller invite, password reset, order confirmation
+Resend rather than SendGrid, chosen when this was scoped.
+
+- [x] `EMAIL_PROVIDER=none|local|resend` switch, default `none`; `channels: ["email"]`
+      (only one provider per channel), with boot guards naming every missing variable
+- [x] A Resend provider at `packages/api/src/modules/resend/`. Talks to the REST API with
+      `fetch` and has **no dependencies** — the `resend` SDK peer-depends on react 19,
+      which conflicts with the pinned react 18.3.1 and breaks the runtime artifact install
+- [x] **The missing subscriber.** Mercur emits `member_invite.created` and has a step that
+      knows how to send, but nothing connects them and no route calls the workflow that
+      does. Inviting a seller returned 201 and told nobody
+- [x] Verified: 9 unit tests, an integration test asserting the notification reaches
+      `status: "success"` (it fails with `"failure"` when no provider is configured), and
+      the `EMAIL_PROVIDER` boot guards in the smoke suite
+- [ ] **Real delivery through Resend** — needs an API key, and a verified domain before it
+      can reach anyone but the account owner
+- [ ] Password reset and order confirmation. Neither exists: Medusa emits the events,
+      nothing listens, so each needs its own subscriber and template. The seller invitation
+      is the only email in the system
 
 ## 2c. What is blocked, and what is not
 

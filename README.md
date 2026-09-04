@@ -152,6 +152,45 @@ To type-check every workspace without building:
 bun run check-types
 ```
 
+## Testing
+
+```bash
+npm run codegen                                    # once after install
+npm run check-types && npm run lint
+npm run test:unit --workspace @acme/api            # fast, no services needed
+npm run test:integration:http --workspace @acme/api
+```
+
+Integration tests boot a real Medusa app against a real database, so Postgres and Redis
+have to be running. The connection settings live in `packages/api/.env.test`, which is
+committed because the credentials are throwaway and CI uses the same file:
+
+```bash
+docker run -d --name mercur-test-pg -p 5433:5432 \
+  -e POSTGRES_USER=medusa -e POSTGRES_PASSWORD=medusa -e POSTGRES_DB=medusa-test postgres:16-alpine
+docker run -d --name mercur-test-redis -p 6380:6379 redis:7-alpine
+```
+
+Two things about the test runner are worth knowing before you write a test, because both
+present as a broken API rather than as what they are:
+
+- **It reads `DB_HOST` / `DB_PORT` / `DB_USERNAME` / `DB_PASSWORD`, not `DATABASE_URL`**,
+  to create and drop the per-run database. Set only `DATABASE_URL` and it silently tries
+  `localhost:5432` and dies with a bare `AggregateError`.
+- **It restores the database between `it` blocks.** Fixtures created in `beforeAll` survive
+  via a snapshot; anything created *inside* a test does not. A flow split across several
+  `it` blocks gives you a first test that passes and a second that 404s on the row the
+  first just created. Keep a flow that builds on itself in one test.
+
+The deployment has its own end-to-end suite — see [deploy/README.md](deploy/README.md).
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push: typecheck and lint, then the three test
+suites against Postgres and Redis service containers. Pull requests additionally run
+`deploy/smoke-test.sh`, which builds the image and drives a full stack — boot guards,
+both panels, a redeploy preserving data, backup round-trip, and the uploads migration.
+
 ## AI agents
 
 This project bundles its documentation as a dependency (`@mercurjs/docs`), so AI agents can read it offline and version-matched to your installed packages. Point your agent at:
