@@ -37,9 +37,9 @@ It covers the domain model (sellers, products, offers, attributes, commissions, 
 ## Getting Started
 
 ```bash
-bun install
-bun run codegen   # required once after install, and after any route change
-bun run dev
+npm install --force   # npm, not bun — bun's linker breaks Medusa's node_modules layout
+npm run codegen       # required once after install, and after any route change
+npm run dev
 ```
 
 `codegen` writes `packages/api/.mercur/routes.d.ts`. Both panels import their route

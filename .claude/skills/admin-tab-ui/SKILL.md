@@ -166,7 +166,7 @@ route instead of contributing to a zone that will not mount.
 
 - Each tab gates: leave a required field empty and confirm `onNext` refuses to advance.
 - Only the last tab submits.
-- `bun run check-types` and `bun run lint` pass in the app you touched.
+- `npm run check-types` and `npm run lint` pass in the app you touched.
 - Tab labels are translated and every control has a `data-testid`.
 
 ## Related

@@ -10,11 +10,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # npm, not bun, for installing — the same reasoning as deploy/Dockerfile. Neither bun
-  # linker produces the node_modules layout Medusa needs. bun is still installed below
-  # because Turborepo reads `packageManager` from package.json and spawns tasks with that
-  # binary; without it every turbo task dies on "cannot find binary path".
-  BUN_VERSION: 1.3.11
+  # npm, not bun — the same reasoning as deploy/Dockerfile. Neither bun linker produces
+  # the node_modules layout Medusa needs, so npm does the installing and package.json's
+  # `packageManager` names npm too, which is what Turborepo spawns tasks with.
   NODE_VERSION: 22
 
 jobs:
@@ -28,10 +26,6 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
 
       # --force, not --legacy-peer-deps: the root pins react-hook-form@7.49.1 alongside
       # @hookform/resolvers@5.4.0, which peer-requires ^7.55.0, so a strict install fails
@@ -85,10 +79,6 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
 
       - run: npm ci --force --no-audit --no-fund
       - run: npm run codegen

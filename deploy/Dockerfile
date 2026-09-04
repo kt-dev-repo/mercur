@@ -68,16 +68,6 @@ COPY packages/api/package.json ./packages/api/
 #                        building the panels with base "/", then `medusa build`.
 RUN npm install --force --no-audit --no-fund
 
-# Turborepo resolves the package manager from package.json's `packageManager`
-# field and spawns tasks with that binary, so bun has to exist even though npm
-# did the installing (see above for why). bun only *runs* the scripts here; it
-# resolves them out of the npm-installed node_modules like any other runner.
-# Keep BUN_VERSION in sync with `packageManager` in package.json.
-# Installed after `npm install` on purpose, so bumping it does not invalidate
-# the expensive dependency layer.
-ARG BUN_VERSION=1.3.11
-RUN npm install -g bun@${BUN_VERSION}
-
 COPY . .
 
 # Production config overlay — see the header. This is the ONLY place the upstream
