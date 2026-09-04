@@ -89,15 +89,32 @@ export default async function sendMemberInviteEmailHandler({
 }
 
 /**
+ * The address and the URL are interpolated into markup, so both have to be escaped.
+ * Neither is trusted: the address is whatever the operator typed into the invite form,
+ * and the URL's origin comes from MERCUR_VENDOR_URL. Unescaped, a `<` or a quote in
+ * either one breaks out of its context and injects markup into the outgoing email.
+ * Ampersand first, or the escapes escape each other.
+ */
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+}
+
+/**
  * Mirrors the markup in Mercur's own sendSellerInvitationEmailStep so the email looks the
  * same whether it is sent from here or from that workflow, should a future release start
  * calling it.
  */
-function buildInvitationHtml(email: string, registrationUrl?: string) {
+export function buildInvitationHtml(email: string, registrationUrl?: string) {
+  const safeEmail = escapeHtml(email)
   const cta = registrationUrl
     ? `<tr>
         <td style="padding: 24px 0 0;">
-          <a href="${registrationUrl}" style="display:inline-block;background-color:#000;color:#fff;padding:12px 24px;text-decoration:none;border-radius:6px;font-size:14px;font-weight:500;">Create your seller account</a>
+          <a href="${escapeHtml(registrationUrl)}" style="display:inline-block;background-color:#000;color:#fff;padding:12px 24px;text-decoration:none;border-radius:6px;font-size:14px;font-weight:500;">Create your seller account</a>
         </td>
       </tr>`
     : ""
@@ -117,7 +134,7 @@ function buildInvitationHtml(email: string, registrationUrl?: string) {
           </tr>
           <tr>
             <td style="font-size:14px;color:#52525b;line-height:1.6;">
-              An invitation has been sent to <strong>${email}</strong> to join as a seller. You can set up your store, list products, and start selling.
+              An invitation has been sent to <strong>${safeEmail}</strong> to join as a seller. You can set up your store, list products, and start selling.
             </td>
           </tr>
           ${cta}
