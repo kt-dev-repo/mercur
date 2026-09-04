@@ -45,6 +45,10 @@ services:
       retries: 10
 
   backend:
+    # Named so `worker` can reuse the exact same image. Both services used to carry
+    # their own identical `build:` block, which made Compose build and export the
+    # image twice on every single deploy.
+    image: ${IMAGE_NAME:-mercur-backend}:latest
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -82,6 +86,10 @@ services:
       AUTH_CORS: ${AUTH_CORS:-${MERCUR_BACKEND_URL}}
       FILE_BACKEND_URL: ${FILE_BACKEND_URL:-${MERCUR_BACKEND_URL}/static}
       MERCUR_VENDOR_URL: ${MERCUR_VENDOR_URL:-${MERCUR_BACKEND_URL}/seller}
+      # Serving over plain http? See INSECURE_COOKIES in .env.example — without it
+      # the panels cannot log in, because Medusa marks session cookies Secure in
+      # production and the browser then never stores them.
+      INSECURE_COOKIES: ${INSECURE_COOKIES:-false}
       STOREFRONT_REVALIDATE_URL: ${STOREFRONT_REVALIDATE_URL:-}
       STOREFRONT_REVALIDATE_SECRET: ${STOREFRONT_REVALIDATE_SECRET:-}
     volumes:
@@ -126,11 +134,9 @@ services:
   # marketplace (set backend's MEDUSA_WORKER_MODE to `shared` and delete this
   # service), but recommended so a long-running job cannot stall HTTP responses.
   worker:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
-      args:
-        MERCUR_BACKEND_URL: ${MERCUR_BACKEND_URL}
+    # Same image as `backend` (built there), different entrypoint role. No `build:`
+    # block on purpose — see the comment on backend's `image:`.
+    image: ${IMAGE_NAME:-mercur-backend}:latest
     restart: unless-stopped
     command: ["worker"]
     depends_on:
@@ -160,8 +166,41 @@ services:
       AUTH_CORS: ${AUTH_CORS:-${MERCUR_BACKEND_URL}}
       FILE_BACKEND_URL: ${FILE_BACKEND_URL:-${MERCUR_BACKEND_URL}/static}
       MERCUR_VENDOR_URL: ${MERCUR_VENDOR_URL:-${MERCUR_BACKEND_URL}/seller}
+      INSECURE_COOKIES: ${INSECURE_COOKIES:-false}
     volumes:
       - uploads:/app/static
+    stop_grace_period: 30s
+
+  # Database backups to S3-compatible storage (RustFS, AWS S3, R2, B2, Spaces).
+  # Opt-in: it only starts when COMPOSE_PROFILES=backup is set, so a stack that
+  # has not configured a bucket does not run a container that can only fail.
+  # See "Backing up to S3" in deploy/README.md.
+  backup:
+    profiles: ["backup"]
+    build:
+      context: ./backup
+      dockerfile: Dockerfile
+    image: ${BACKUP_IMAGE_NAME:-mercur-backup}:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-mercur}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mercur}?sslmode=disable}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      # Plain defaults, not `:?` guards. Compose interpolates every service in the
+      # file whether or not its profile is active, so a `:?` here would refuse to
+      # parse the stack for everyone who has not configured backups. backup.sh
+      # validates these itself and exits with a specific message.
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_PREFIX: ${S3_PREFIX:-mercur}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_PROVIDER: ${S3_PROVIDER:-Other}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
     stop_grace_period: 30s
 
 volumes:

@@ -5,10 +5,11 @@
 // image only*. The upstream file stays untouched in Git so `git pull` / template
 // upgrades never conflict.
 //
-// It is a copy of the upstream config plus exactly two additions, both marked
+// It is a copy of the upstream config plus exactly three additions, each marked
 // with "OVERLAY:" below:
 //   1. the Redis-backed cache / event bus / workflow engine / locking modules
 //   2. `workerMode`, so the server and worker containers can be split
+//   3. an opt-out from Secure session cookies, for http-only deployments
 //
 // >>> WHEN YOU UPGRADE MERCUR, RE-SYNC THIS FILE. <<<
 //   diff -u packages/api/medusa-config.ts deploy/medusa-config.production.ts
@@ -51,6 +52,12 @@ const redisModules = REDIS_URL
       },
       {
         resolve: '@medusajs/medusa/workflow-engine-redis',
+        // This module logs "The `url` option is deprecated. Please use `redisUrl`
+        // instead" on every boot. Do not act on it: at @medusajs/medusa 2.18.0 the
+        // loader still destructures `options.redis.url`, so moving to `redisUrl`
+        // crashes the whole server with "Cannot destructure property 'url' of
+        // '(intermediate value)' as it is undefined". The warning is cosmetic;
+        // revisit it only after a Medusa upgrade.
         options: { redis: { url: REDIS_URL } },
       },
       {
@@ -69,6 +76,21 @@ const redisModules = REDIS_URL
     ]
   : []
 
+// OVERLAY 3/3 — session cookie security.
+// Medusa's express-loader hardcodes `secure: true` on the session cookie whenever
+// NODE_ENV is production or staging, and express-session then silently declines to
+// send Set-Cookie on a request it does not consider secure. The symptom is precise
+// and baffling: POST /auth/session answers 200 with the user payload, no cookie is
+// stored, and the panel bounces straight back to its login screen. No error anywhere.
+//
+// Behind Dokploy's Traefik with a certificate this is correct and needs nothing —
+// Traefik sends X-Forwarded-Proto: https and Medusa already trusts the proxy.
+// Set INSECURE_COOKIES=true ONLY while the site is served over plain http: the
+// window before your certificate is issued, or a local run. Session cookies then
+// travel unencrypted and can be read off the network, so turn it back off — and
+// rebuild — the moment https works.
+const INSECURE_COOKIES = process.env.INSECURE_COOKIES === 'true'
+
 module.exports = withMercur({
   projectConfig: {
     databaseUrl: process.env.DATABASE_URL,
@@ -76,6 +98,9 @@ module.exports = withMercur({
     // "shared" runs HTTP and background jobs in one process. docker-compose.yml
     // splits them: MEDUSA_WORKER_MODE=server on `backend`, `worker` on `worker`.
     ...(REDIS_URL ? { redisUrl: REDIS_URL } : {}),
+    ...(INSECURE_COOKIES
+      ? { cookieOptions: { secure: false, sameSite: 'lax' as const } }
+      : {}),
     workerMode: (process.env.MEDUSA_WORKER_MODE as 'shared' | 'server' | 'worker') || 'shared',
     http: {
       storeCors: process.env.STORE_CORS!,

@@ -5,11 +5,32 @@
 #                             + background jobs. This is the default.
 #   entrypoint.sh worker   -> skips migrations, runs background jobs only.
 #   entrypoint.sh migrate  -> runs migrations and exits.
-#   entrypoint.sh seed     -> runs the demo seed and exits.
+#   entrypoint.sh seed     -> runs the demo seed and exits. A no-op on a seeded database.
 #   entrypoint.sh <cmd...> -> runs an arbitrary command (e.g. `npx medusa user -e ... -p ...`).
 set -e
 
 ROLE="${1:-server}"
+
+# A password containing "/", "+" or "=" — exactly what `openssl rand -base64` emits —
+# is not URL-safe, and docker-compose.yml interpolates POSTGRES_PASSWORD into
+# DATABASE_URL raw. A "/" either makes the URL unparseable or silently reinterprets
+# the host, and the only symptom is a connection that never succeeds. Say so instead.
+check_database_url() {
+  [ -n "$DATABASE_URL" ] || return 0
+  # Two failure shapes, both from an unescaped "/" in the password: one throws on
+  # parse, the other parses "wrong" — postgres://mercur:/pw@host/db reads the host
+  # as "mercur" and swallows the rest into the path. Hence the shape check as well.
+  node -e "
+const u = new URL(process.env.DATABASE_URL);
+const ok = /^postgres(ql)?:\$/.test(u.protocol) && u.hostname && /^\/[^/]+\$/.test(u.pathname);
+process.exit(ok ? 0 : 1);
+" 2>/dev/null && return 0
+  echo "[entrypoint] refusing to start: DATABASE_URL is not a usable postgres URL." >&2
+  echo "[entrypoint] The usual cause is an unescaped character in the password —" >&2
+  echo "[entrypoint] '/', '+' and '=' must be percent-encoded (%2F, %2B, %3D)." >&2
+  echo "[entrypoint] Generate a URL-safe password instead: openssl rand -hex 32" >&2
+  exit 1
+}
 
 wait_for_postgres() {
   [ -n "$DATABASE_URL" ] || return 0
@@ -53,28 +74,50 @@ require_secrets() {
 
 run_migrations() {
   echo "[entrypoint] running database migrations..."
-  npx medusa db:migrate
+  # --execute-safe-links, because this runs unattended. `db:migrate` also syncs
+  # module links, and when an upgrade changes them it PROMPTS for confirmation —
+  # there is no terminal here to answer, so a future Mercur or Medusa upgrade
+  # could stall the container on a question nobody can see. The flag answers it
+  # non-interactively and only ever applies the safe actions; anything that would
+  # drop a link table is left alone and reported, for you to run by hand with
+  # `npx medusa db:migrate --execute-all-links` once you have a backup.
+  npx medusa db:migrate --execute-safe-links
 }
 
 case "$ROLE" in
   server)
     require_secrets
+    check_database_url
     wait_for_postgres
     if [ "$RUN_MIGRATIONS" != "false" ]; then
       run_migrations
     else
       echo "[entrypoint] RUN_MIGRATIONS=false — skipping migrations."
     fi
-    # The marker lives on the uploads volume so it survives restarts and redeploys.
-    # Without it, leaving RUN_SEED=true would re-seed on every single restart.
-    SEED_MARKER=/app/static/.mercur-seeded
-    if [ "$RUN_SEED" = "true" ] && [ ! -f "$SEED_MARKER" ]; then
-      echo "[entrypoint] seeding demo data..."
-      npx medusa exec ./src/scripts/seed.js
-      touch "$SEED_MARKER"
-      echo "[entrypoint] seed complete; marked at $SEED_MARKER."
-    elif [ "$RUN_SEED" = "true" ]; then
-      echo "[entrypoint] RUN_SEED=true but $SEED_MARKER exists — already seeded, skipping."
+    # Nothing here decides whether to seed. That used to be a marker file at
+    # /app/static/.mercur-seeded — on the uploads volume, guarding data in the
+    # postgres volume — and it broke both ways: losing the database but keeping
+    # uploads left the marketplace permanently empty behind a green healthcheck,
+    # and losing uploads but keeping the database re-ran the seed over live data.
+    # The seed script now asks the database itself, so the answer cannot disagree
+    # with the data. (The marker is still *written* below, for rollbacks only.)
+    if [ "$RUN_SEED" = "true" ]; then
+      echo "[entrypoint] seeding demo data (a no-op if this marketplace is already seeded)..."
+      if npx medusa exec ./src/scripts/seed.js; then
+        echo "[entrypoint] seed step finished."
+        # Nothing in THIS version reads this file. It is written only so that
+        # rolling the deployment back to a pre-fix image is safe: that older
+        # entrypoint keys "already seeded" off this marker, and without it would
+        # re-run its non-idempotent seed over a populated database and crash-loop
+        # the container. Cheap insurance on the rollback path.
+        touch /app/static/.mercur-seeded 2>/dev/null || true
+      else
+        # Demo data is optional; the marketplace is not. Exiting here would restart
+        # the container, retry the same failing seed and exit again — an unreachable
+        # site instead of a running one missing its demo catalog.
+        echo "[entrypoint] WARNING: seeding failed. Starting the server anyway." >&2
+        echo "[entrypoint] Re-run it later with: npx medusa exec ./src/scripts/seed.js" >&2
+      fi
     fi
     export MEDUSA_WORKER_MODE="${MEDUSA_WORKER_MODE:-shared}"
     echo "[entrypoint] starting Medusa (worker mode: $MEDUSA_WORKER_MODE)"
@@ -83,6 +126,7 @@ case "$ROLE" in
 
   worker)
     require_secrets
+    check_database_url
     wait_for_postgres
     export MEDUSA_WORKER_MODE=worker
     echo "[entrypoint] starting Medusa worker"
@@ -90,11 +134,13 @@ case "$ROLE" in
     ;;
 
   migrate)
+    check_database_url
     wait_for_postgres
     run_migrations
     ;;
 
   seed)
+    check_database_url
     wait_for_postgres
     exec npx medusa exec ./src/scripts/seed.js
     ;;
