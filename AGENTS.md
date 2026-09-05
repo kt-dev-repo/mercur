@@ -17,8 +17,29 @@ It covers the domain model (sellers, products, offers, attributes, commissions, 
 ├── packages/api/         # Backend API — modules, workflows, links, subscribers
 ├── apps/admin/           # Admin dashboard — operator panel
 ├── apps/vendor/          # Vendor portal — seller dashboard
+├── deploy/               # Dokploy stack, production config overlay, smoke suite
 └── blocks.json           # Block configuration and registry aliases
 ```
+
+The shopper-facing **storefront is a separate repository**. `@mercurjs/storefront`
+requires React 19 while the panels here are pinned to React 18.3.1, so it is deployed as
+its own service; the environment variables joining the two are documented in
+`deploy/README.md`. This repository is a *consumer* of `@mercurjs/*` from npm, generated
+from upstream's `templates/basic` — it is not a fork, and upstream changes are taken by
+bumping pins, never by merging. See "Relationship to upstream Mercur" in `README.md`.
+
+### Skills
+
+`.claude/skills/` holds the conventions for each area. Read the relevant one before
+working in it, rather than inferring the pattern from a nearby file:
+
+| Working on | Skill |
+|---|---|
+| Panel UI, forms, pages, tabs | `medusa-ui-conformance` (first), `admin-page-ui`, `admin-form-ui`, `admin-tab-ui` |
+| Any test in `packages/api` | `backend-testing` |
+| Anything under `deploy/` | `deploy-dokploy` |
+| Subscribers, templates, the mail provider | `notifications-email` |
+| `PAYMENTS`, Stripe, payouts, seeded providers | `payments` |
 
 ## Documentation
 
