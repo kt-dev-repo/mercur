@@ -35,7 +35,7 @@ const dashboardAppDir = (name: string) => {
   return fs.existsSync(bundled) ? bundled : path.join(__dirname, `../../apps/${name}`)
 }
 
-// OVERLAY 1/5 — Redis.
+// OVERLAY 1/6 — Redis.
 // Required in production: the in-memory workflow engine loses in-flight workflow
 // state on every restart and cannot be shared between the server and worker
 // containers. Registered only when REDIS_URL is set, so this file still runs
@@ -78,7 +78,7 @@ const redisModules = REDIS_URL
     ]
   : []
 
-// OVERLAY 3/5 — session cookie security.
+// OVERLAY 3/6 — session cookie security.
 // Medusa's express-loader hardcodes `secure: true` on the session cookie whenever
 // NODE_ENV is production or staging, and express-session then silently declines to
 // send Set-Cookie on a request it does not consider secure. The symptom is precise
@@ -93,7 +93,7 @@ const redisModules = REDIS_URL
 // rebuild — the moment https works.
 const INSECURE_COOKIES = process.env.INSECURE_COOKIES === 'true'
 
-// OVERLAY 4/5 — where uploaded files live.
+// OVERLAY 4/6 — where uploaded files live.
 // FILE_STORAGE picks the provider for every upload: product images and videos,
 // seller logos and banners, anything a block adds later.
 //
@@ -141,7 +141,7 @@ if (FILE_STORAGE === 's3') {
   }
 }
 
-// OVERLAY 5/5 — sending email.
+// OVERLAY 5/6 — sending email.
 // Without a notification provider the marketplace cannot send anything, and the failure
 // is silent rather than loud: Mercur's seller invitation builds its email, hands it to
 // the notification module, and it goes nowhere. The invite is created, the API returns
@@ -208,6 +208,121 @@ const notificationModules =
         },
       ]
 
+// OVERLAY 6/6 — taking money, and paying sellers.
+// A marketplace that cannot charge a customer is a catalogue. The seed wires regions to
+// `pp_system_default`, a stub that authorises nothing, so out of the box checkout
+// completes without money moving.
+//
+//   stub (default)  pp_system_default only — no real charges, safe for a demo
+//   stripe          real card payments AND Stripe Connect payouts to sellers
+//
+// Comma-separated on purpose. Medusa allows several payment providers per region, and
+// Stripe does not acquire everywhere — Cambodia needs ABA PayWay, for instance (see
+// PLAN-aba-payway-khqr.md). Adding a second provider should be a config change, not a
+// rewrite of this block.
+const PAYMENTS = (process.env.PAYMENTS || 'stub')
+  .split(',')
+  .map((p) => p.trim())
+  .filter(Boolean)
+
+const KNOWN_PAYMENTS = ['stub', 'stripe']
+const unknownPayments = PAYMENTS.filter((p) => !KNOWN_PAYMENTS.includes(p))
+
+if (unknownPayments.length) {
+  throw new Error(
+    `PAYMENTS contains ${unknownPayments.map((p) => `"${p}"`).join(', ')}, which ` +
+      `${unknownPayments.length > 1 ? 'are' : 'is'} not recognised. ` +
+      `Valid values are ${KNOWN_PAYMENTS.join(', ')}, comma-separated. ` +
+      'Refusing to guess: silently ignoring an unknown provider would leave the ' +
+      'marketplace taking no money while appearing to be configured for it.'
+  )
+}
+
+const STRIPE_ENABLED = PAYMENTS.includes('stripe')
+
+if (STRIPE_ENABLED) {
+  const missing = [
+    !process.env.STRIPE_API_KEY && 'STRIPE_API_KEY',
+    !process.env.STRIPE_WEBHOOK_SECRET && 'STRIPE_WEBHOOK_SECRET',
+    !process.env.STRIPE_PAYOUT_WEBHOOK_SECRET && 'STRIPE_PAYOUT_WEBHOOK_SECRET',
+  ].filter(Boolean)
+
+  if (missing.length) {
+    throw new Error(
+      `PAYMENTS includes stripe but ${missing.join(', ')} ` +
+        `${missing.length > 1 ? 'are' : 'is'} not set. ` +
+        'The payment and payout webhooks are two separate Stripe endpoints with two ' +
+        'different signing secrets — combining them means one of the two silently ' +
+        'fails signature verification and those events are lost.'
+    )
+  }
+}
+
+// Payments and payouts are two different Stripe integrations, not one. The payment
+// provider charges the customer; the payout provider transfers each seller their share
+// afterwards. Mercur uses Stripe's separate charges and transfers model, which makes the
+// platform the merchant of record.
+const paymentModules = !STRIPE_ENABLED
+  ? []
+  : [
+      {
+        resolve: '@medusajs/medusa/payment',
+        options: {
+          providers: [
+            {
+              resolve: '@medusajs/medusa/payment-stripe',
+              id: 'stripe',
+              options: {
+                apiKey: process.env.STRIPE_API_KEY,
+                webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+                // NOT optional for a marketplace, and the easiest thing here to get
+                // wrong. Capturing at authorisation takes the whole amount immediately,
+                // before the split is known, which breaks the payout to sellers. The
+                // payout module captures later, once fulfilment allows it.
+                capture: false,
+                // `automaticPaymentMethods`, camelCase — NOT the
+                // `automatic_payment_methods` Mercur's Stripe Connect guide shows. The
+                // installed provider reads the camelCase key
+                // (payment-stripe/dist/core/stripe-base.js) and ignores the snake_case
+                // one silently, so the documented spelling leaves the intent without
+                // automatic payment methods while looking configured. Verified against
+                // 2.18.0; check this again on upgrade.
+                automaticPaymentMethods: true,
+              },
+            },
+          ],
+        },
+      },
+      {
+        resolve: '@mercurjs/core/modules/payout',
+        options: {
+          providers: [
+            {
+              resolve: '@mercurjs/payout-stripe-connect',
+              id: 'stripe-connect',
+              options: {
+                apiKey: process.env.STRIPE_API_KEY,
+                // A DIFFERENT secret from the payment webhook above.
+                webhookSecret: process.env.STRIPE_PAYOUT_WEBHOOK_SECRET,
+                // What a connected account must satisfy before Mercur will mark it
+                // ACTIVE and send it money. These are the defaults, written out rather
+                // than inherited, because loosening them is a decision someone should
+                // have to make deliberately: paying out to an account with outstanding
+                // requirements is how funds end up stuck in limbo.
+                accountValidation: {
+                  detailsSubmitted: true,
+                  chargesEnabled: true,
+                  payoutsEnabled: true,
+                  noOutstandingRequirements: true,
+                  requiredCapabilities: [],
+                },
+              },
+            },
+          ],
+        },
+      },
+    ]
+
 const fileProviders =
   FILE_STORAGE === 's3'
     ? [
@@ -252,7 +367,7 @@ const fileProviders =
 module.exports = withMercur({
   projectConfig: {
     databaseUrl: process.env.DATABASE_URL,
-    // OVERLAY 2/5 — Redis session store + worker mode.
+    // OVERLAY 2/6 — Redis session store + worker mode.
     // "shared" runs HTTP and background jobs in one process. docker-compose.yml
     // splits them: MEDUSA_WORKER_MODE=server on `backend`, `worker` on `worker`.
     ...(REDIS_URL ? { redisUrl: REDIS_URL } : {}),
@@ -287,15 +402,18 @@ module.exports = withMercur({
         path: '/seller',
       }
     },
-    // OVERLAY 1/5 (cont.) — spliced in ahead of the file module, same as the
+    // OVERLAY 1/6 (cont.) — spliced in ahead of the file module, same as the
     // Mercur development monorepo's own apps/api config does.
     ...redisModules,
     {
       resolve: '@medusajs/medusa/file',
-      // OVERLAY 4/5 (cont.) — local volume, or S3 when S3_FILE_BUCKET is set.
+      // OVERLAY 4/6 (cont.) — local volume, or S3 when S3_FILE_BUCKET is set.
       options: { providers: fileProviders },
     },
-    // OVERLAY 5/5 (cont.) — empty unless EMAIL_PROVIDER selects one.
+    // OVERLAY 5/6 (cont.) — empty unless EMAIL_PROVIDER selects one.
     ...notificationModules,
+    // OVERLAY 6/6 (cont.) — empty unless PAYMENTS includes stripe, in which case this
+    // is two modules: payments in, payouts out.
+    ...paymentModules,
   ],
 })

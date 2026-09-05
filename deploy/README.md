@@ -379,6 +379,8 @@ is applied as an overlay *inside the image only*, leaving
   Compose project, so renaming or recreating the Dokploy service leaves your
   data behind in an orphaned volume. See [Surviving a service
   rename](#surviving-a-service-rename).
+- **The marketplace cannot take money by default.** `PAYMENTS` defaults to `stub`,
+  which charges nothing. See [Taking payments](#taking-payments).
 - **Uploads default to a local volume** at `/app/static`. They survive redeploys,
   but the database backups do not cover them and they cannot be shared across
   multiple backend replicas. Set `FILE_STORAGE=s3` to put them in RustFS instead —
@@ -501,6 +503,70 @@ origin as soon as you have one.
 > equally quiet, which means a missing email is indistinguishable from a missing account.
 > Use `EMAIL_PROVIDER=local` and read the container output when you need to confirm it
 > fired.
+
+### Taking payments
+
+**The default takes no money.** Regions are seeded against `pp_system_default`, a stub
+that authorises everything and charges nothing. Checkout completes, an order appears, and
+no card is touched — fine for a demo, and the single most important thing to change
+before you have customers.
+
+```
+PAYMENTS=stub      # the default
+PAYMENTS=stripe    # real card payments and seller payouts
+```
+
+The value is a comma-separated list, because Medusa allows several payment providers per
+region and Stripe does not acquire everywhere.
+
+#### Stripe
+
+Stripe is **two integrations, not one**. The Medusa payment provider charges the
+customer; Mercur's payout provider transfers each seller their share afterwards. Mercur
+uses Stripe's separate charges and transfers model, which makes your platform the
+merchant of record — you are responsible for VAT, disputes and chargebacks.
+
+Enable Connect first (**Settings → Connect settings** in the Stripe Dashboard), or seller
+onboarding has nothing to create accounts against. Then:
+
+```
+PAYMENTS=stripe
+STRIPE_API_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+STRIPE_PAYOUT_WEBHOOK_SECRET=whsec_...
+```
+
+Add **two separate webhook endpoints** in Stripe, each with its own signing secret:
+
+| Endpoint | Secret | Events |
+|---|---|---|
+| `https://<your-domain>/hooks/payment/stripe_stripe` | `STRIPE_WEBHOOK_SECRET` | `payment_intent.succeeded`, `payment_intent.amount_capturable_updated`, `payment_intent.payment_failed`, `charge.refunded` |
+| `https://<your-domain>/hooks/payout` | `STRIPE_PAYOUT_WEBHOOK_SECRET` | `account.updated` |
+
+> Do not point both at one endpoint or reuse a secret. Stripe signs each endpoint
+> separately, so the mismatched one fails verification and drops every event it receives —
+> silently. The boot guard requires both variables for exactly this reason.
+
+Payments are **authorised, not captured**, at checkout (`capture: false`). This is not
+optional for a marketplace: capturing the full amount up front, before the split is
+known, breaks the transfers to sellers. The payout module captures later, once fulfilment
+allows it.
+
+Sellers onboard themselves through the vendor panel, and a connected account only becomes
+`ACTIVE` once Stripe reports details submitted, charges enabled, payouts enabled and no
+outstanding requirements. Those conditions are written out explicitly in
+`medusa-config.production.ts` rather than inherited — loosening them means paying out to
+accounts Stripe has not finished verifying.
+
+Test keys (`sk_test_`) work end to end against Stripe's test mode, so you can prove the
+whole flow before any real money is involved.
+
+#### Somewhere Stripe does not reach
+
+Stripe does not acquire in every market. For Cambodia the equivalent is ABA PayWay and
+KHQR; `PLAN-aba-payway-khqr.md` in the repository root is a research write-up of what
+integrating it would involve. Nothing is built — it exists so the `PAYMENTS` list was
+designed to accept a second provider rather than assume one.
 
 ### Backing up and restoring
 

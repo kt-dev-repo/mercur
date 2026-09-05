@@ -183,6 +183,28 @@ assert_contains "$e" "RESEND_FROM" "...and names RESEND_FROM"
 assert_contains "$(config_loads -e EMAIL_PROVIDER=resend -e RESEND_API_KEY=re_x -e RESEND_FROM=a@b.com)" \
   "LOADED" "a fully configured resend setup loads"
 
+# Payments. Same shape as the email guards: an unrecognised value must refuse rather
+# than fall back to the stub, or a deployment meant to take money quietly takes none.
+assert_contains "$(config_loads)" "LOADED" \
+  "PAYMENTS unset defaults to stub and loads"
+assert_contains "$(config_loads -e PAYMENTS=stub)" "LOADED" "PAYMENTS=stub loads"
+assert_contains "$(config_loads -e PAYMENTS=nonsense)" 'not recognised' \
+  "an unrecognised PAYMENTS value is refused, not silently treated as stub"
+
+p=$(config_loads -e PAYMENTS=stripe)
+assert_contains "$p" "STRIPE_API_KEY" "PAYMENTS=stripe with nothing else names STRIPE_API_KEY"
+assert_contains "$p" "STRIPE_WEBHOOK_SECRET" "...and names STRIPE_WEBHOOK_SECRET"
+assert_contains "$p" "STRIPE_PAYOUT_WEBHOOK_SECRET" "...and names the separate payout secret"
+assert_contains "$(config_loads -e PAYMENTS=stripe -e STRIPE_API_KEY=sk_test_x \
+  -e STRIPE_WEBHOOK_SECRET=whsec_a -e STRIPE_PAYOUT_WEBHOOK_SECRET=whsec_b)" \
+  "LOADED" "a fully configured stripe setup loads"
+
+# A comma-separated list is the point of the setting: Stripe does not acquire
+# everywhere, so a second provider must be additive rather than a rewrite.
+assert_contains "$(config_loads -e PAYMENTS=stub,stripe -e STRIPE_API_KEY=sk_test_x \
+  -e STRIPE_WEBHOOK_SECRET=whsec_a -e STRIPE_PAYOUT_WEBHOOK_SECRET=whsec_b)" \
+  "LOADED" "PAYMENTS accepts a comma-separated list"
+
 # The provider's own guard, which the config guards above cannot reach.
 assert_contains "$(provider_validates 'a@b.com')" "ACCEPTED" \
   "the Resend provider accepts a plain address"
