@@ -86,6 +86,10 @@ services:
       AUTH_CORS: ${AUTH_CORS:-${MERCUR_BACKEND_URL}}
       FILE_BACKEND_URL: ${FILE_BACKEND_URL:-${MERCUR_BACKEND_URL}/static}
       MERCUR_VENDOR_URL: ${MERCUR_VENDOR_URL:-${MERCUR_BACKEND_URL}/seller}
+      MERCUR_ADMIN_URL: ${MERCUR_ADMIN_URL:-${MERCUR_BACKEND_URL}/dashboard}
+      # No default: there is no storefront in this stack to point at. Password
+      # reset emails for customers have no link without it.
+      MERCUR_STOREFRONT_URL: ${MERCUR_STOREFRONT_URL:-}
       # Serving over plain http? See INSECURE_COOKIES in .env.example — without it
       # the panels cannot log in, because Medusa marks session cookies Secure in
       # production and the browser then never stores them.
@@ -185,6 +189,10 @@ services:
       AUTH_CORS: ${AUTH_CORS:-${MERCUR_BACKEND_URL}}
       FILE_BACKEND_URL: ${FILE_BACKEND_URL:-${MERCUR_BACKEND_URL}/static}
       MERCUR_VENDOR_URL: ${MERCUR_VENDOR_URL:-${MERCUR_BACKEND_URL}/seller}
+      MERCUR_ADMIN_URL: ${MERCUR_ADMIN_URL:-${MERCUR_BACKEND_URL}/dashboard}
+      # No default: there is no storefront in this stack to point at. Password
+      # reset emails for customers have no link without it.
+      MERCUR_STOREFRONT_URL: ${MERCUR_STOREFRONT_URL:-}
       INSECURE_COOKIES: ${INSECURE_COOKIES:-false}
       # The worker loads the same modules as the backend, so the file provider has
       # to be configured identically or background jobs that touch files fail in a

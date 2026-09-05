@@ -1,6 +1,6 @@
 # Development plan — Foundation, then Go-live
 
-Status: **Stage 1 — complete (20 of 20); Stage 2 — 7 of 15, email done.** Based on `main`.
+Status: **Stage 1 — complete (20 of 20); Stage 2 — 8 of 15, email complete.** Based on `main`.
 See `PLAN-file-storage.md` for the storage work this builds on.
 
 Stage 1 landed so far: regression tests for the seed and seller scoping, GitHub Actions
@@ -10,9 +10,9 @@ product approval pipeline, and multi-seller checkout. **Stage 1 is done.**
 
 Stage 2b — email — is **done**. Seller invitation email goes out through Resend, real
 delivery is proven end to end against the live API rather than mocked, and the integration
-has since been reviewed and hardened against the failure modes that review found. What
-remains in Stage 2 is Stripe (2a, needs test keys) and the two emails nobody has written
-yet: password reset and order confirmation.
+has since been reviewed and hardened against the failure modes that review found. Password reset and
+order confirmation have since been written too, so **Stage 2b is complete** and Stripe
+(2a, needs test keys) is all that remains in Stage 2.
 
 ## What is next, and in what order
 
@@ -22,8 +22,7 @@ packages/api/package.json` returns nothing at all, and `src/subscribers/` holds 
 member invite and the storefront cache listener.
 
 1. ~~Multi-seller checkout~~ — **done**, Stage 1 is now complete.
-2. **Password reset and order confirmation** (Stage 2b). Unblocked, and it reuses the
-   escaping, retry and idempotency work already proven in production on the invite path.
+2. ~~Password reset and order confirmation~~ — **done**, Stage 2b is complete.
 3. **Stripe Connect** (Stage 2a). The largest piece and the only one gated on external
    keys — though the module wirings, the `PAYMENTS` switch, the boot guards and the
    compose/env/README work all land without them. Last, deliberately.
@@ -126,7 +125,7 @@ shell script. Both are fast to check at container level.
 
 Needs credentials, but **not paid ones**: Stripe test-mode keys and a free email tier
 unblock all of it, and both are available immediately.
-Progress: **7 / 15**
+Progress: **8 / 15**
 
 ## 2a. Stripe Connect — payments and payouts
 
@@ -190,9 +189,24 @@ Resend rather than SendGrid, chosen when this was scoped.
       asserts `data.seller_name` reaches the notification — `content` is not persisted by
       the notification module — which is what proves the seller lookup resolves rather
       than failing soft into an anonymous email
-- [ ] Password reset and order confirmation. Neither exists: Medusa emits the events,
-      nothing listens, so each needs its own subscriber and template. The seller invitation
-      is the only email in the system
+- [x] Password reset and order confirmation, done 2026-09-05. Both were the same silent
+      failure as the invitation: the events are emitted, nothing listened.
+      - **Password reset** on `auth.password_reset`. The link has to point at the front
+        end the account signs into, so the URL is chosen by actor type — `MERCUR_ADMIN_URL`
+        for operators, `MERCUR_VENDOR_URL` for sellers, `MERCUR_STOREFRONT_URL` for
+        customers. The panels default off `MERCUR_BACKEND_URL`; a storefront cannot, so a
+        customer reset arrives without a link until it is configured, rather than with one
+        pointing nowhere. The route answers 201 for unknown addresses so it cannot be used
+        to enumerate accounts, and the subscriber is equally quiet
+      - **Order confirmation** on `order_group.created`, *not* `order.placed`. A
+        three-seller cart emits `order.placed` three times; subscribing there would send
+        three emails, none showing the whole basket. The receipt is grouped by seller and
+        says outright that it arrives in separate deliveries
+      - Shared layout extracted to `src/lib/email-layout.ts`. The invitation deliberately
+        does not use it: its markup mirrors Mercur's own step, and it is the one path
+        proven against live Resend
+      - Coverage: 47 unit tests (from 29), 13 integration (from 11). Seller names and
+        product titles are escaped — anyone who registers a store picks their own name
 
 ## 2c. What is blocked, and what is not
 
@@ -200,7 +214,7 @@ Resend rather than SendGrid, chosen when this was scoped.
 |---|---|
 | Buildable with no credentials | Both module wirings, switches and guards, compose/env/README, `notification-local` verification |
 | Needs Stripe test keys (free, immediate) | End-to-end checkout, webhook signatures, payout onboarding |
-| ~~Needs an email account (free tier)~~ | Real delivery — **done**, verified 2026-09-05 |
+| ~~Needs an email account (free tier)~~ | Real delivery — **done**, verified 2026-09-05. Reset and confirmation are wired and tested but have only been proven against the local provider, not live Resend |
 | Needs live keys | Only the final production cutover |
 
 ---

@@ -412,8 +412,10 @@ is applied as an overlay *inside the image only*, leaving
 `.env.example` documents a few settings the Step 3 block leaves out, each with a
 working default: `DATABASE_URL` (below), `TRAEFIK_CERTRESOLVER` and
 `TRAEFIK_ROUTER` (change the latter only if you run several of these stacks on
-one host), `FILE_BACKEND_URL`, and the storefront hooks `MERCUR_VENDOR_URL`,
-`STOREFRONT_REVALIDATE_URL` and `STOREFRONT_REVALIDATE_SECRET`.
+one host), `FILE_BACKEND_URL`, the panel and storefront URLs `MERCUR_VENDOR_URL`,
+`MERCUR_ADMIN_URL` and `MERCUR_STOREFRONT_URL` (see *Email* — they are what password
+reset links are built from), and the storefront hooks `STOREFRONT_REVALIDATE_URL` and
+`STOREFRONT_REVALIDATE_SECRET`.
 
 The four `*_CORS` values each fall back to `MERCUR_BACKEND_URL`, so the panels work
 even if you omit them. Set them explicitly anyway: they are what you edit when you
@@ -472,10 +474,33 @@ Then **Rebuild** — the config is compiled into the image.
 `RESEND_REPLY_TO` is optional, for when replies should go somewhere other than the From
 address.
 
-**What actually sends today:** the seller invitation, and nothing else. Password resets
-and order confirmations do not exist yet — Medusa emits the events but nothing listens,
-so each needs a subscriber and a template written. Configuring a provider does not create
-those emails; it makes the one that exists arrive.
+**What actually sends today:** the seller invitation, the password reset, and the order
+confirmation. Each is a subscriber on an event that Mercur or Medusa already emits but
+that nothing previously listened for, so all three were silent before they were written.
+
+The order confirmation goes out once per *order group*, not once per seller order. A cart
+spanning three sellers produces three orders and one email showing the whole basket,
+grouped by seller and saying plainly that it will arrive in separate deliveries.
+
+Password reset links have to point at the front end the account actually signs into, so
+the URL depends on who is resetting:
+
+| Actor | Link built from | Default |
+|---|---|---|
+| Operator (`user`) | `MERCUR_ADMIN_URL` | `MERCUR_BACKEND_URL/dashboard` |
+| Seller (`member`) | `MERCUR_VENDOR_URL` | `MERCUR_BACKEND_URL/seller` |
+| Customer | `MERCUR_STOREFRONT_URL` | **none — see below** |
+
+The two panels are served from this stack, so they default correctly. A storefront is
+not: if you leave `MERCUR_STOREFRONT_URL` unset, a customer's reset email still arrives
+but carries no link, because there is nowhere to send them. Set it to your storefront's
+origin as soon as you have one.
+
+> Password reset returns `201` whether or not the address has an account — that is
+> deliberate, so the endpoint cannot be used to discover who has one. The subscriber is
+> equally quiet, which means a missing email is indistinguishable from a missing account.
+> Use `EMAIL_PROVIDER=local` and read the container output when you need to confirm it
+> fired.
 
 ### Backing up and restoring
 

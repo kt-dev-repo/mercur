@@ -287,6 +287,24 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+step "Email links reach the container that sends them"
+
+# Emails are sent from the WORKER, not the backend — the subscribers run there. So it is
+# the worker's environment that decides whether a password reset link points anywhere.
+# Adding a variable to the backend block alone leaves every reset email linkless, and
+# nothing else in this suite would notice.
+assert_contains "$(dc exec -T worker printenv MERCUR_ADMIN_URL 2>/dev/null)" "/dashboard" \
+  "the worker gets the admin panel URL that operator reset links are built from"
+assert_contains "$(dc exec -T worker printenv MERCUR_VENDOR_URL 2>/dev/null)" "/seller" \
+  "...and the vendor panel URL for seller reset links"
+
+# No default on purpose: this stack serves no storefront. It must be present and empty
+# rather than absent, so the subscriber sees "not configured" instead of inheriting
+# whatever a future compose change leaves lying around.
+dc exec -T worker printenv MERCUR_STOREFRONT_URL >/dev/null 2>&1
+assert_eq "0" "$?" "MERCUR_STOREFRONT_URL is passed through even when empty"
+
+# ---------------------------------------------------------------------------
 step "Uploads in S3, and migrating the old ones"
 
 # Still in local mode: put a file on the volume and attach it to a product, so the
