@@ -79,6 +79,12 @@ like a broken API rather than what they are:
 - It **restores the database between `it` blocks**. `beforeAll` fixtures survive via a
   snapshot; rows created inside a test do not. Split a flow across several tests and the
   second one 404s on what the first just created. Keep such a flow in one `it`.
+- **Do not run the integration suite from a git worktree nested inside the checkout**
+  (`.claude/worktrees/*`). Node resolution reaches the parent's `node_modules` as well as
+  the worktree's, and nested workflow steps then cross two copies of `awilix`, failing
+  with `parentContainer[ROLL_UP_REGISTRATIONS] is not a function` — a 500 that looks like
+  a broken route. `POST /store/carts/:id/shipping-methods` hits this; simpler specs do
+  not, so the suite looks healthy. Run from a flat checkout, as CI does.
 
 ## Changing anything under `deploy/`
 

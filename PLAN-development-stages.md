@@ -1,18 +1,32 @@
 # Development plan — Foundation, then Go-live
 
-Status: **Stage 1 — 19 of 20 done; Stage 2 — 7 of 15, email done.** Based on `main`.
+Status: **Stage 1 — complete (20 of 20); Stage 2 — 7 of 15, email done.** Based on `main`.
 See `PLAN-file-storage.md` for the storage work this builds on.
 
 Stage 1 landed so far: regression tests for the seed and seller scoping, GitHub Actions
 running typecheck/lint and three jest suites, a container smoke suite on
 pull requests, a backup restore drill, and flow coverage of the seller lifecycle and the
-product approval pipeline. Remaining: multi-seller checkout.
+product approval pipeline, and multi-seller checkout. **Stage 1 is done.**
 
 Stage 2b — email — is **done**. Seller invitation email goes out through Resend, real
 delivery is proven end to end against the live API rather than mocked, and the integration
 has since been reviewed and hardened against the failure modes that review found. What
 remains in Stage 2 is Stripe (2a, needs test keys) and the two emails nobody has written
 yet: password reset and order confirmation.
+
+## What is next, and in what order
+
+Verified against the tree on 2026-09-05, not read off the checkboxes: there is no checkout
+spec in `integration-tests/http/`, `grep -ri stripe packages/api/src deploy
+packages/api/package.json` returns nothing at all, and `src/subscribers/` holds only the
+member invite and the storefront cache listener.
+
+1. ~~Multi-seller checkout~~ — **done**, Stage 1 is now complete.
+2. **Password reset and order confirmation** (Stage 2b). Unblocked, and it reuses the
+   escaping, retry and idempotency work already proven in production on the invite path.
+3. **Stripe Connect** (Stage 2a). The largest piece and the only one gated on external
+   keys — though the module wirings, the `PAYMENTS` switch, the boot guards and the
+   compose/env/README work all land without them. Last, deliberately.
 
 ## Context
 
@@ -48,7 +62,7 @@ without Stage 1 means hand-verifying payment code, which is the worst place to b
 # Stage 1 — Foundation
 
 No credentials needed. Buildable start to finish today.
-Progress: **19 / 20**
+Progress: **20 / 20**
 
 ## 1a. Regression tests for what actually broke
 
@@ -81,7 +95,12 @@ shell script. Both are fast to check at container level.
 
 - [x] Seller lifecycle — register → `pending_approval` → approve → `open`; suspend, reinstate
 - [x] Catalogue — vendor creates a product, admin approves, vendor creates an offer
-- [ ] Multi-seller checkout — two sellers in one cart → one order group, one order each
+- [x] Multi-seller checkout — two sellers in one cart → one order group, one order each.
+      Asserted from both sides: the group reports `seller_count: 2` with one order per
+      seller (attributed by each line item's `offer_id`, which is what the split groups
+      on), and each vendor sees exactly one order through `/vendor/orders` and nothing of
+      the other's. Kept in **one `it`**: the runner restores the database between `it`
+      blocks, so a cart built in one test is gone by the next (see `AGENTS.md`)
 - [x] **Scoping** — a vendor authenticated for seller A cannot read seller B's orders
       (a security property, not a feature)
 
