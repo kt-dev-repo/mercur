@@ -2,6 +2,10 @@ import { loadEnv } from '@medusajs/framework/utils'
 import { withMercur } from '@mercurjs/core'
 import fs from 'fs'
 import path from 'path'
+// Deployment settings — Redis, worker mode, cookies, object storage, email, payments.
+// A no-op unless the corresponding variables are set, so `npm run dev` sees exactly the
+// config below. See src/lib/production-overlay.ts for why it is wired this way.
+import { applyProductionOverlay } from './src/lib/production-overlay'
 
 loadEnv(process.env.NODE_ENV || 'development', process.cwd())
 
@@ -16,7 +20,7 @@ const dashboardAppDir = (name: string) => {
   return fs.existsSync(bundled) ? bundled : path.join(__dirname, `../../apps/${name}`)
 }
 
-module.exports = withMercur({
+module.exports = withMercur(applyProductionOverlay({
   projectConfig: {
     databaseUrl: process.env.DATABASE_URL,
     http: {
@@ -80,4 +84,4 @@ module.exports = withMercur({
       },
     },
   ],
-})
+}))

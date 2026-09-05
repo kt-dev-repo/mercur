@@ -358,7 +358,6 @@ Everything below is background. You do not need it to deploy.
 | `Dockerfile` | Builds the backend image with both panels compiled in |
 | `entrypoint.sh` | Waits for Postgres, runs migrations, then starts Medusa |
 | `docker-compose.yml` | Postgres, Redis, backend and worker |
-| `medusa-config.production.ts` | Production config overlay — adds Redis and worker mode |
 | `prepare-artifact.mjs` | Build-time fixups so the runtime image installs cleanly |
 | `.env.example` | The Step 3 block, plus the optional settings listed below |
 | `backup/` | The S3 sidecar — scheduled `pg_dump` to RustFS/S3, and the uploads migration |
@@ -555,7 +554,7 @@ allows it.
 Sellers onboard themselves through the vendor panel, and a connected account only becomes
 `ACTIVE` once Stripe reports details submitted, charges enabled, payouts enabled and no
 outstanding requirements. Those conditions are written out explicitly in
-`medusa-config.production.ts` rather than inherited — loosening them means paying out to
+`src/lib/production-overlay.ts` rather than inherited — loosening them means paying out to
 accounts Stripe has not finished verifying.
 
 Test keys (`sk_test_`) work end to end against Stripe's test mode, so you can prove the
@@ -732,7 +731,7 @@ image URL is built from it, so getting it wrong is quiet and expensive: uploads
 report success and the whole catalogue renders broken. If it is missing entirely
 the backend refuses to start rather than let that happen.
 
-**3. Rebuild** — `medusa-config.production.ts` is compiled into the image, so a
+**3. Rebuild** — the config is compiled into the image, so a
 restart is not enough.
 
 **4. Check it.** Upload an image in the admin panel, then confirm the URL it was
@@ -981,18 +980,27 @@ The build context is the repository root, not this folder. Both `deploy/.env` an
 
 ### Upgrading Mercur
 
-Upgrades are a normal `git pull`. The one thing to re-check afterwards is the
-config overlay:
+Upgrades are a version bump — see "Relationship to upstream Mercur" in the repository
+README — and **there is nothing to re-sync afterwards.**
 
-```bash
-diff -u packages/api/medusa-config.ts deploy/medusa-config.production.ts
-```
+This used to be different. `deploy/medusa-config.production.ts` was a copy of
+`packages/api/medusa-config.ts` plus the deployment additions, swapped in by the
+Dockerfile, and every upgrade meant diffing the two by hand. A copy that nobody diffs
+silently keeps the old version, so the deployment ran configuration nobody had written.
 
-The only differences should be the blocks marked `OVERLAY:` — Redis and
-`workerMode`. If Mercur changed anything else in that file, copy the change
-across and rebuild. If a future release adds Redis to the template itself, delete
-the overlay and the `COPY deploy/medusa-config.production.ts` line from the
-Dockerfile.
+The relationship is now inverted. `packages/api/medusa-config.ts` is upstream's file plus
+two lines, and it delegates to `packages/api/src/lib/production-overlay.ts`, which holds
+every deployment setting and which upstream will never touch. An upstream change to the
+config flows through on its own.
+
+The overlay acts **only on variables that are explicitly set**, which is what lets one
+file serve both development and production: `npm run dev` sees exactly upstream's config,
+while `docker-compose.yml` always passes `EMAIL_PROVIDER`, `FILE_STORAGE`, `PAYMENTS` and
+`MEDUSA_WORKER_MODE` with defaults of its own.
+
+> One consequence: running the image without Compose and without setting `EMAIL_PROVIDER`
+> leaves the development notification provider in place, which logs mail rather than
+> dropping it. Safer than the alternative, but not identical to `EMAIL_PROVIDER=none`.
 
 ### Running the checks yourself
 
