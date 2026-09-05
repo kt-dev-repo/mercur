@@ -90,6 +90,12 @@ services:
       # No default: there is no storefront in this stack to point at. Password
       # reset emails for customers have no link without it.
       MERCUR_STOREFRONT_URL: ${MERCUR_STOREFRONT_URL:-}
+      # Payments. Comma-separated; "stub" takes no real money. The worker needs
+      # these too — it runs the capture and daily payout jobs.
+      PAYMENTS: ${PAYMENTS:-stub}
+      STRIPE_API_KEY: ${STRIPE_API_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PAYOUT_WEBHOOK_SECRET: ${STRIPE_PAYOUT_WEBHOOK_SECRET:-}
       # Serving over plain http? See INSECURE_COOKIES in .env.example — without it
       # the panels cannot log in, because Medusa marks session cookies Secure in
       # production and the browser then never stores them.
@@ -193,6 +199,12 @@ services:
       # No default: there is no storefront in this stack to point at. Password
       # reset emails for customers have no link without it.
       MERCUR_STOREFRONT_URL: ${MERCUR_STOREFRONT_URL:-}
+      # Payments. Comma-separated; "stub" takes no real money. The worker needs
+      # these too — it runs the capture and daily payout jobs.
+      PAYMENTS: ${PAYMENTS:-stub}
+      STRIPE_API_KEY: ${STRIPE_API_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PAYOUT_WEBHOOK_SECRET: ${STRIPE_PAYOUT_WEBHOOK_SECRET:-}
       INSECURE_COOKIES: ${INSECURE_COOKIES:-false}
       # The worker loads the same modules as the backend, so the file provider has
       # to be configured identically or background jobs that touch files fail in a

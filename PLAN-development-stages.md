@@ -1,6 +1,7 @@
 # Development plan — Foundation, then Go-live
 
-Status: **Stage 1 — complete (20 of 20); Stage 2 — 8 of 15, email complete.** Based on `main`.
+Status: **Stage 1 — complete (20 of 20); Stage 2 — 13 of 15.** Based on `main`.
+Only the two Stripe steps that need test keys remain.
 See `PLAN-file-storage.md` for the storage work this builds on.
 
 Stage 1 landed so far: regression tests for the seed and seller scoping, GitHub Actions
@@ -23,9 +24,16 @@ member invite and the storefront cache listener.
 
 1. ~~Multi-seller checkout~~ — **done**, Stage 1 is now complete.
 2. ~~Password reset and order confirmation~~ — **done**, Stage 2b is complete.
-3. **Stripe Connect** (Stage 2a). The largest piece and the only one gated on external
-   keys — though the module wirings, the `PAYMENTS` switch, the boot guards and the
-   compose/env/README work all land without them. Last, deliberately.
+3. **Stripe Connect** (Stage 2a) — the no-credentials portion is **done**: both module
+   wirings, the `PAYMENTS` switch, the boot guards, the seed, and compose/env/README/smoke.
+   What is left needs Stripe test keys: registering the two webhook endpoints and the
+   end-to-end two-seller checkout.
+
+### Not on the critical path
+
+`PLAN-aba-payway-khqr.md` — a research write-up of ABA PayWay and KHQR, for selling in
+Cambodia, where Stripe does not acquire. Nothing is built. It exists because it changed
+one decision in 2a: `PAYMENTS` is a list rather than a boolean.
 
 ## Context
 
@@ -125,22 +133,36 @@ shell script. Both are fast to check at container level.
 
 Needs credentials, but **not paid ones**: Stripe test-mode keys and a free email tier
 unblock all of it, and both are available immediately.
-Progress: **8 / 15**
+Progress: **13 / 15**
 
 ## 2a. Stripe Connect — payments and payouts
 
 Confirmed against Mercur's integration documentation, not recalled.
 
-- [ ] Add `@mercurjs/payout-stripe-connect` to `packages/api/package.json`
-- [ ] Payment module — `@medusajs/medusa/payment` + `@medusajs/medusa/payment-stripe`,
+- [x] Add `@mercurjs/payout-stripe-connect` to `packages/api/package.json`
+- [x] Payment module — `@medusajs/medusa/payment` + `@medusajs/medusa/payment-stripe`,
       with **`capture: false`** (mandatory for a marketplace) and `automatic_payment_methods: true`
-- [ ] Payout module — `@mercurjs/core/modules/payout` + `@mercurjs/payout-stripe-connect`,
-      with `accountValidation`
-- [ ] `PAYMENTS=stub|stripe` switch, default `stub`, boot guard naming every missing variable
-- [ ] Seed: add the Stripe provider to region `payment_providers` when enabled
+- [x] Payout module — `@mercurjs/core/modules/payout` + `@mercurjs/payout-stripe-connect`,
+      with `accountValidation` written out explicitly rather than inherited
+- [x] `PAYMENTS` switch, default `stub`, boot guard naming every missing variable.
+      Made **comma-separated** rather than either/or: Medusa allows several providers per
+      region and Stripe does not acquire everywhere, so a second provider should be a
+      config change (see `PLAN-aba-payway-khqr.md`)
+- [x] Seed: add the Stripe provider to region `payment_providers` when enabled.
+      Extracted to `src/lib/payment-providers.ts` and unit tested, then **reconciled
+      against the providers actually registered**. The switch lives in the production
+      overlay, which development does not use, so `PAYMENTS=stripe` there killed the seed
+      outright with "Payment providers with ids pp_stripe_stripe not found or not
+      enabled" — confirmed by running it. It now seeds what exists and warns about what it
+      cannot offer, because a deployment that believes it takes cards and does not is the
+      failure this setting exists to prevent
 - [ ] Webhooks — `/hooks/payment/stripe_stripe` (`payment_intent.succeeded`,
       `payment_intent.amount_capturable_updated`, `payment_intent.payment_failed`,
-      `charge.refunded`) and `/hooks/payout` (`account.updated`), distinct signing secrets
+      `charge.refunded`) and `/hooks/payout` (`account.updated`), distinct signing secrets.
+      *Medusa registers both routes itself; what remains is registering the endpoints in
+      Stripe and confirming signature verification against real deliveries. The boot guard
+      already requires both secrets separately, and `deploy/README.md` documents the two
+      endpoints and their events — **needs test keys to verify***
 - [ ] Verify in Stripe test mode: two-seller cart → checkout → order group with a payment
       intent per seller; connected account reaches `ACTIVE`
 

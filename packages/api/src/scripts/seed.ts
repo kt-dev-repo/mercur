@@ -10,6 +10,7 @@ import {
   type CreateOfferDTO,
   type CreateProductDTO,
 } from "@mercurjs/types";
+import { paymentProvidersFor } from "../lib/payment-providers";
 import {
   approveSellerWorkflow,
   createOffersWorkflow,
@@ -346,6 +347,38 @@ export default async function seedDemoData({ container }: ExecArgs) {
       },
     },
   });
+  // What PAYMENTS asks for, reconciled against what is actually registered.
+  //
+  // The switch lives in deploy/medusa-config.production.ts, which the development config
+  // does not use — so `PAYMENTS=stripe` in development would otherwise seed a region
+  // against a provider that was never loaded, and the seed would fail on a setting that
+  // looks reasonable. Intersecting keeps the seed working either way.
+  //
+  // A mismatch is logged rather than swallowed: a deployment that believes it is taking
+  // card payments and is not is precisely the failure this setting exists to prevent.
+  const paymentModuleService = container.resolve(Modules.PAYMENT);
+  const registeredProviders = (
+    await paymentModuleService.listPaymentProviders({}, { select: ["id"] })
+  ).map((provider) => provider.id);
+
+  const requestedProviders = paymentProvidersFor(process.env.PAYMENTS);
+  const paymentProviders = requestedProviders.filter((id) =>
+    registeredProviders.includes(id)
+  );
+  const unavailable = requestedProviders.filter(
+    (id) => !registeredProviders.includes(id)
+  );
+
+  if (unavailable.length) {
+    logger.warn(
+      `PAYMENTS asks for ${unavailable.join(", ")}, but ${unavailable.length > 1 ? "those providers are" : "that provider is"} ` +
+        `not registered, so the region will not offer ${unavailable.length > 1 ? "them" : "it"}. ` +
+        `Registered: ${registeredProviders.join(", ") || "none"}. ` +
+        "Check the payment module configuration matches PAYMENTS."
+    );
+  }
+
+
   logger.info("Seeding region data...");
   const regionModuleService = container.resolve(Modules.REGION);
 
@@ -382,7 +415,7 @@ export default async function seedDemoData({ container }: ExecArgs) {
             name: "Europe",
             currency_code: "eur",
             countries: unassignedCountries,
-            payment_providers: ["pp_system_default"],
+            payment_providers: paymentProviders,
           },
         ],
       },
@@ -396,7 +429,7 @@ export default async function seedDemoData({ container }: ExecArgs) {
             name: "Europe",
             currency_code: "eur",
             countries,
-            payment_providers: ["pp_system_default"],
+            payment_providers: paymentProviders,
           },
         ],
       },
