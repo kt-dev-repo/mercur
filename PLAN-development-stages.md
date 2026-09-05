@@ -4,7 +4,7 @@ Status: **Stage 1 — 19 of 20 done; Stage 2 — 7 of 15, email done.** Based on
 See `PLAN-file-storage.md` for the storage work this builds on.
 
 Stage 1 landed so far: regression tests for the seed and seller scoping, GitHub Actions
-running typecheck/lint and three jest suites, a 33-assertion container smoke suite on
+running typecheck/lint and three jest suites, a container smoke suite on
 pull requests, a backup restore drill, and flow coverage of the seller lifecycle and the
 product approval pipeline. Remaining: multi-seller checkout.
 

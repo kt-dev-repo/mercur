@@ -74,6 +74,20 @@ config_loads() {
     -e "try{require('/app/medusa-config.js');console.log('LOADED')}catch(e){console.log('REFUSED: '+e.message.split('\n')[0])}" 2>/dev/null | tail -1
 }
 
+# Ask the compiled Resend provider whether it accepts a set of options.
+#
+# config_loads cannot answer this: `require`ing medusa-config.js runs the overlay's own
+# guards (is the variable set?) but never reaches the provider, whose validateOptions
+# Medusa calls later, during module load. A malformed RESEND_FROM therefore passes
+# config_loads and then crash-loops the container at boot — which is exactly the failure
+# a boot-guard suite exists to catch before a deploy does.
+provider_validates() { # provider_validates <from>
+  docker run --rm --entrypoint node "$IMAGE" \
+    -e "const {ResendNotificationService}=require('/app/src/modules/resend/service.js');
+        try{ResendNotificationService.validateOptions({api_key:'re_x',from:process.argv[1]});console.log('ACCEPTED')}
+        catch(e){console.log('REFUSED: '+e.message.split('\n')[0])}" "$1" 2>/dev/null | tail -1
+}
+
 wait_for() { # wait_for <seconds> <shell-command>
   local deadline=$(( $(date +%s) + $1 )); shift
   # shellcheck disable=SC2294  # the caller passes a command string on purpose
@@ -168,6 +182,14 @@ assert_contains "$e" "RESEND_API_KEY" "EMAIL_PROVIDER=resend with nothing else n
 assert_contains "$e" "RESEND_FROM" "...and names RESEND_FROM"
 assert_contains "$(config_loads -e EMAIL_PROVIDER=resend -e RESEND_API_KEY=re_x -e RESEND_FROM=a@b.com)" \
   "LOADED" "a fully configured resend setup loads"
+
+# The provider's own guard, which the config guards above cannot reach.
+assert_contains "$(provider_validates 'a@b.com')" "ACCEPTED" \
+  "the Resend provider accepts a plain address"
+assert_contains "$(provider_validates 'Our Marketplace <a@b.com>')" "ACCEPTED" \
+  "...and the display-name form Resend also takes"
+assert_contains "$(provider_validates 'notanemail')" "not an email address" \
+  "a RESEND_FROM that is not an address is refused at module load, not on the first send"
 
 # ---------------------------------------------------------------------------
 step "First deploy"
