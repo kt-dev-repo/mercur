@@ -174,4 +174,4 @@ or a CDN in front of the bucket), which is not proof of anything and offers
   the new provider, which lacks the key. The row goes, the file is orphaned. Migrating
   first avoids it. Documented, not engineered around.
 - **A full rebuild (~8 min) is needed per config change**, since
-  `medusa-config.production.ts` is baked into the image.
+  the config is baked into the image (settings now live in `src/lib/production-overlay.ts`).

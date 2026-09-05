@@ -52,9 +52,8 @@ module.exports = withMercur(applyProductionOverlay({
     },
     {
       // Email. The local provider logs each message instead of sending it, which is what
-      // you want in development and what the integration tests assert against. Production
-      // swaps this for a real provider via EMAIL_PROVIDER — see
-      // deploy/medusa-config.production.ts.
+      // you want in development and what the integration tests assert against. Setting
+      // EMAIL_PROVIDER replaces this — see src/lib/production-overlay.ts.
       resolve: '@medusajs/medusa/notification',
       options: {
         providers: [

@@ -2,7 +2,7 @@
  * Which payment providers a seeded region should offer.
  *
  * A region only offers the providers named on it, so this has to agree with the
- * `PAYMENTS` switch in `deploy/medusa-config.production.ts`. When they disagree the
+ * `PAYMENTS` switch in `src/lib/production-overlay.ts`. When they disagree the
  * failure is quiet and confusing: Stripe keys are set, the module loads, the boot guard
  * passes — and no customer can select Stripe at checkout, because the region was seeded
  * without it.

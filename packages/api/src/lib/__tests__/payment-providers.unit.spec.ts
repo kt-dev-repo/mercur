@@ -1,6 +1,6 @@
 import { paymentProvidersFor } from "../payment-providers"
 
-// This list and the PAYMENTS switch in deploy/medusa-config.production.ts have to agree.
+// This list and the PAYMENTS switch in src/lib/production-overlay.ts have to agree.
 // When they drift the deployment looks configured and simply cannot take money: the
 // module loads, the boot guard passes, and Stripe is absent from the region so no
 // customer can select it. That failure is invisible until someone tries to check out.
