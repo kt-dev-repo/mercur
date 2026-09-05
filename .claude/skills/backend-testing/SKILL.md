@@ -18,8 +18,10 @@ API rather than as a test-harness detail.
 | `test:integration:http` | `integration-tests/http/*.spec.ts` | A real booted app: routes, workflows, subscribers, events. |
 | `deploy/smoke-test.sh` | `deploy/` | Anything only reachable at container level — boot guards, the production config overlay, shell scripts. Runs on pull requests only. |
 
-Config guards live in `deploy/medusa-config.production.ts`, which is outside jest's
-`testMatch`. They can only be tested by the smoke suite.
+Boot guards now live in `packages/api/src/lib/production-overlay.ts`, which **is** inside
+jest's `src/**` reach, so they are unit-testable — see
+`src/lib/__tests__/production-overlay.unit.spec.ts`. The smoke suite still covers what
+unit tests cannot: that the *compiled artifact* loads inside a real container.
 
 ## Four traps
 

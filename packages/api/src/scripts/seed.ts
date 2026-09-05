@@ -349,10 +349,11 @@ export default async function seedDemoData({ container }: ExecArgs) {
   });
   // What PAYMENTS asks for, reconciled against what is actually registered.
   //
-  // The switch lives in deploy/medusa-config.production.ts, which the development config
-  // does not use — so `PAYMENTS=stripe` in development would otherwise seed a region
-  // against a provider that was never loaded, and the seed would fail on a setting that
-  // looks reasonable. Intersecting keeps the seed working either way.
+  // Intersecting rather than trusting PAYMENTS, because the two can disagree: a provider
+  // can be named without being registered (a module that failed to load, a provider id
+  // that changed upstream), and createRegionsWorkflow then dies with "Payment providers
+  // with ids pp_stripe_stripe not found or not enabled" — a confusing failure for a
+  // setting that looks reasonable.
   //
   // A mismatch is logged rather than swallowed: a deployment that believes it is taking
   // card payments and is not is precisely the failure this setting exists to prevent.
