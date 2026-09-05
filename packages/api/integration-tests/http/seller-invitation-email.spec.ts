@@ -90,7 +90,7 @@ medusaIntegrationTestRunner({
         const notificationService = container.resolve(Modules.NOTIFICATION)
         const sent = await waitFor(async () => {
           const rows = await notificationService.listNotifications({ to: invited })
-          return rows.length ? rows : null
+          return settled(rows)
         })
 
         expect(sent).not.toBeNull()
@@ -121,6 +121,12 @@ medusaIntegrationTestRunner({
           `member-invite-${res.data.member_invite.id}`
         )
       })
+
+      // `createNotifications` writes the row and hands it to a provider afterwards, so a
+      // row can exist while `status` is still "pending". Polling for existence alone
+      // makes every status assertion a race that a slower runner loses.
+      const settled = <T extends { status?: string }>(rows: T[]): T[] | null =>
+        rows.length && rows.every((r) => r.status !== "pending") ? rows : null
 
       const waitFor = async <T>(
         check: () => Promise<T | null>,

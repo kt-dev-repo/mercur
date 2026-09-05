@@ -412,7 +412,7 @@ medusaIntegrationTestRunner({
             to: "shopper@checkout.test",
             template: "orderConfirmation",
           })
-          return rows.length ? rows : null
+          return settled(rows)
         })
         expect(confirmations).not.toBeNull()
         expect(confirmations!).toHaveLength(1)
@@ -421,6 +421,13 @@ medusaIntegrationTestRunner({
         expect(confirmations![0].status).toEqual("success")
         expect(confirmations![0].data).toMatchObject({ seller_count: 2 })
 
+        // Proves the seller lookup inside the subscriber actually resolves. It fails
+        // soft — the receipt still renders, falling back to "Order #12" — so without
+        // this a broken lookup leaves every test green and every confirmation anonymous.
+        expect(
+          [...((confirmations![0].data as { seller_names?: string[] }).seller_names ?? [])].sort()
+        ).toEqual(["Alpha Store", "Beta Store"])
+
         expect(seenBySeller.get(sellers.a.id)).toHaveLength(1)
         expect(seenBySeller.get(sellers.b.id)).toHaveLength(1)
         expect(seenBySeller.get(sellers.a.id)).not.toEqual(seenBySeller.get(sellers.b.id))
@@ -428,6 +435,12 @@ medusaIntegrationTestRunner({
           orders.map((o) => o.id).sort()
         )
       })
+
+      // `createNotifications` writes the row and hands it to a provider afterwards, so a
+      // row can exist while `status` is still "pending". Polling for existence alone
+      // makes every status assertion a race that a slower runner loses.
+      const settled = <T extends { status?: string }>(rows: T[]): T[] | null =>
+        rows.length && rows.every((r) => r.status !== "pending") ? rows : null
 
       const waitFor = async <T>(
         check: () => Promise<T | null>,
