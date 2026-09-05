@@ -1,6 +1,13 @@
-# Mercur Basic Template
+# Mercur Marketplace
 
-This template comes configured with the bare minimum to get started building your marketplace with Mercur.
+A multi-vendor marketplace built on [Mercur](https://github.com/mercurjs/mercur) and
+MedusaJS v2: a backend API, an admin console, a vendor panel, and a self-hosted
+deployment stack for Dokploy.
+
+It began as Mercur's `templates/basic` starter and has since grown a production
+deployment (`deploy/`), CI, an integration and unit test suite, transactional email, and
+Stripe payments and payouts. See [Relationship to upstream
+Mercur](#relationship-to-upstream-mercur) for how it tracks the project it came from.
 
 ## Quick Start
 
@@ -196,6 +203,66 @@ The deployment has its own end-to-end suite — see [deploy/README.md](deploy/RE
 suites against Postgres and Redis service containers. Pull requests additionally run
 `deploy/smoke-test.sh`, which builds the image and drives a full stack — boot guards,
 both panels, a redeploy preserving data, backup round-trip, and the uploads migration.
+
+## Relationship to upstream Mercur
+
+This repository was **generated from** [`mercurjs/mercur`](https://github.com/mercurjs/mercur)'s
+`templates/basic`. It is not a fork and shares no git history with it: upstream is the
+library monorepo that publishes the `@mercurjs/*` packages, and this repository is a
+consumer that installs them from npm.
+
+That distinction decides how you take upstream changes.
+
+### Upgrading Mercur
+
+**Bump versions; never merge.** With no shared history a merge from upstream is
+meaningless.
+
+1. Check what is published: `npm view @mercurjs/core dist-tags`
+2. Bump the `@mercurjs/*` pins in `packages/api/package.json`, and the `@medusajs/*`
+   entries in the root `package.json` under both `resolutions` and `overrides` — they are
+   duplicated so npm and pnpm consumers agree
+3. `npm install --force && npm run codegen`
+4. Run the full verification set under [Testing](#testing)
+
+### Diffing against the template
+
+Upstream occasionally changes the starter. To see what moved:
+
+```bash
+git remote add upstream https://github.com/mercurjs/mercur.git
+git remote set-url --push upstream DISABLED   # fetch-only; nothing here belongs upstream
+git fetch upstream
+
+git diff upstream/main:templates/basic/package.json -- package.json
+```
+
+Adopt deliberately. Much of what differs is ours on purpose — `deploy/`, CI, the test
+suite, `src/subscribers/`, and the production config overlay have no upstream counterpart.
+
+### Why npm, when upstream uses bun
+
+Upstream's template declares `packageManager: bun@1.3.11`. This repository declares
+`npm@11.17.0`, because neither bun linker produces the workspace-hoisted `node_modules`
+layout Medusa needs. **This is deliberate — do not "fix" it back.**
+
+One visible consequence: `packages/api/.npmrc` holds `public-hoist-pattern` and
+`auto-install-peers` settings, which are pnpm/bun options. npm ignores workspace-level
+`.npmrc` files entirely and says so on every command:
+
+```
+npm warn config ignoring workspace config at .../packages/api/.npmrc
+```
+
+That warning is expected and harmless. The file is kept for anyone installing with
+pnpm or bun, for whom those hoist patterns are what make Medusa resolvable at all.
+
+### The storefront lives in its own repository
+
+The shopper-facing storefront is **not** in this repository. `@mercurjs/storefront`
+requires React 19 while the panels here are pinned to React 18.3.1, so it is deployed as a
+separate service from a separate repository. The environment variables that tie the two
+together are documented in [`deploy/README.md`](deploy/README.md).
 
 ## AI agents
 
