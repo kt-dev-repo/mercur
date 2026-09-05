@@ -122,6 +122,31 @@ export default async function sendMemberInviteEmailHandler({
 }
 
 /**
+ * The slice of the seller module this subscriber uses, declared rather than inferred.
+ *
+ * `container.resolve("seller")` is only typed when `.medusa/types/modules-bindings.d.ts`
+ * exists — a generated, gitignored file written by a Medusa build. It is present on a
+ * machine that has built or booted the app and absent in CI, so inferring the type here
+ * typechecks locally and fails on the runner. Declaring it keeps both honest.
+ */
+type SellerModuleLike = {
+  retrieveSeller: (
+    id: string,
+    config?: { select?: string[] }
+  ) => Promise<{ name?: string } | undefined>
+  retrieveMemberInvite: (
+    id: string
+  ) => Promise<{ metadata?: Record<string, unknown> | null } | undefined>
+  updateMemberInvites: (data: {
+    id: string
+    metadata: Record<string, unknown>
+  }) => Promise<unknown>
+}
+
+const sellerModule = (container: SubscriberArgs["container"]) =>
+  container.resolve("seller") as unknown as SellerModuleLike
+
+/**
  * The name of the store doing the inviting, or undefined if it cannot be read. Never
  * throws: a missing store name degrades the email, it does not justify not sending it.
  */
@@ -133,7 +158,7 @@ async function sellerName(
     return undefined
   }
   try {
-    const seller = await container.resolve("seller").retrieveSeller(sellerId, {
+    const seller = await sellerModule(container).retrieveSeller(sellerId, {
       select: ["id", "name"],
     })
     return seller?.name || undefined
@@ -152,7 +177,7 @@ async function recordFailure(
   inviteId: string,
   message: string
 ) {
-  const sellerService = container.resolve("seller")
+  const sellerService = sellerModule(container)
   const existing = await sellerService.retrieveMemberInvite(inviteId)
 
   await sellerService.updateMemberInvites({
