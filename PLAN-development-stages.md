@@ -1,6 +1,6 @@
 # Development plan — Foundation, then Go-live
 
-Status: **Stage 1 — 19 of 20 done; Stage 2 email underway.** Based on `main`.
+Status: **Stage 1 — 19 of 20 done; Stage 2 — 6 of 14, email done.** Based on `main`.
 See `PLAN-file-storage.md` for the storage work this builds on.
 
 Stage 1 landed so far: regression tests for the seed and seller scoping, GitHub Actions
@@ -8,9 +8,10 @@ running typecheck/lint and three jest suites, a 33-assertion container smoke sui
 pull requests, a backup restore drill, and flow coverage of the seller lifecycle and the
 product approval pipeline. Remaining: multi-seller checkout.
 
-Counts below reflect what is on `main` plus this branch. Stage 2 has started: seller
-invitation email goes out through Resend, and real delivery still needs an API key and a
-verified domain. Stripe test keys are still outstanding.
+Stage 2b — email — is **done**. Seller invitation email goes out through Resend, and
+real delivery is proven end to end against the live API, not just mocked. What remains in
+Stage 2 is Stripe (2a, needs test keys) and the two emails nobody has written yet:
+password reset and order confirmation.
 
 ## Context
 
@@ -24,6 +25,8 @@ Two facts from the repo set the agenda:
   `pp_system_default`, a stub.
 - **It cannot send email.** No notification provider is configured, so seller invites,
   password resets and order confirmations are generated and dropped.
+  *Resolved for the seller invitation (2b); password reset and order confirmation still
+  have no subscriber.*
 
 And one fact explains why the last several sessions were so laborious: **there is one test
 file** (`packages/api/integration-tests/http/health.spec.ts`) **and no CI**. Every fix was
@@ -103,7 +106,7 @@ shell script. Both are fast to check at container level.
 
 Needs credentials, but **not paid ones**: Stripe test-mode keys and a free email tier
 unblock all of it, and both are available immediately.
-Progress: **4 / 13**
+Progress: **6 / 14**
 
 ## 2a. Stripe Connect — payments and payouts
 
@@ -137,8 +140,15 @@ Resend rather than SendGrid, chosen when this was scoped.
 - [x] Verified: 9 unit tests, an integration test asserting the notification reaches
       `status: "success"` (it fails with `"failure"` when no provider is configured), and
       the `EMAIL_PROVIDER` boot guards in the smoke suite
-- [ ] **Real delivery through Resend** — needs an API key, and a verified domain before it
-      can reach anyone but the account owner
+- [x] The address and the registration URL are escaped before they go into the email
+      body. Both are interpolated into markup and neither is trusted; 5 unit tests cover
+      it (2026-09-05)
+- [x] **Real delivery through Resend** — done 2026-09-05 against a verified domain. The
+      full path, on the deploy stack rather than in a test: admin creates a seller,
+      `POST /admin/sellers/:id/members/invite` returns 201, `member_invite.created`
+      reaches the subscriber **in the worker container**, and Resend returns a message id.
+      Creating a seller with a `member` invites that address too, so both trigger paths
+      deliver
 - [ ] Password reset and order confirmation. Neither exists: Medusa emits the events,
       nothing listens, so each needs its own subscriber and template. The seller invitation
       is the only email in the system
@@ -149,7 +159,7 @@ Resend rather than SendGrid, chosen when this was scoped.
 |---|---|
 | Buildable with no credentials | Both module wirings, switches and guards, compose/env/README, `notification-local` verification |
 | Needs Stripe test keys (free, immediate) | End-to-end checkout, webhook signatures, payout onboarding |
-| Needs an email account (free tier) | Real delivery |
+| ~~Needs an email account (free tier)~~ | Real delivery — **done**, verified 2026-09-05 |
 | Needs live keys | Only the final production cutover |
 
 ---
