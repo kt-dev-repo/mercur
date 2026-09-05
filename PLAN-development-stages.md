@@ -14,6 +14,23 @@ has since been reviewed and hardened against the failure modes that review found
 remains in Stage 2 is Stripe (2a, needs test keys) and the two emails nobody has written
 yet: password reset and order confirmation.
 
+## What is next, and in what order
+
+Verified against the tree on 2026-09-05, not read off the checkboxes: there is no checkout
+spec in `integration-tests/http/`, `grep -ri stripe packages/api/src deploy
+packages/api/package.json` returns nothing at all, and `src/subscribers/` holds only the
+member invite and the storefront cache listener.
+
+1. **Multi-seller checkout** (Stage 1b, below). The last thing between here and a complete
+   Stage 1, and the closing risk note is explicit that CI should be proven before Stage 2
+   goes near payment code. It also exercises the order-group machinery Stripe depends on,
+   so it is not throwaway work. No credentials.
+2. **Password reset and order confirmation** (Stage 2b). Unblocked, and it reuses the
+   escaping, retry and idempotency work already proven in production on the invite path.
+3. **Stripe Connect** (Stage 2a). The largest piece and the only one gated on external
+   keys — though the module wirings, the `PAYMENTS` switch, the boot guards and the
+   compose/env/README work all land without them. Last, deliberately.
+
 ## Context
 
 The deployment layer is now in good shape: data survives redeploys and upgrades, the
@@ -81,7 +98,9 @@ shell script. Both are fast to check at container level.
 
 - [x] Seller lifecycle — register → `pending_approval` → approve → `open`; suspend, reinstate
 - [x] Catalogue — vendor creates a product, admin approves, vendor creates an offer
-- [ ] Multi-seller checkout — two sellers in one cart → one order group, one order each
+- [ ] Multi-seller checkout — two sellers in one cart → one order group, one order each.
+      Keep the whole flow in **one `it`**: the runner restores the database between `it`
+      blocks, so a cart built in one test is gone by the next (see `AGENTS.md`)
 - [x] **Scoping** — a vendor authenticated for seller A cannot read seller B's orders
       (a security property, not a feature)
 
