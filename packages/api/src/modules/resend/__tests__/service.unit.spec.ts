@@ -9,6 +9,7 @@ const service = (overrides: Record<string, unknown> = {}) =>
       api_key: "re_test",
       from: "marketplace@example.com",
       base_url: "https://resend.test",
+      retry_base_delay_ms: 0,
       ...overrides,
     } as any
   )
@@ -32,6 +33,15 @@ const okResponse = (body: unknown = { id: "email_123" }) =>
     status: 200,
     json: async () => body,
     text: async () => JSON.stringify(body),
+  }) as unknown as Response
+
+const failResponse = (status: number, headers: Record<string, string> = {}) =>
+  ({
+    ok: false,
+    status,
+    headers: { get: (name: string) => headers[name.toLowerCase()] ?? null },
+    json: async () => ({}),
+    text: async () => `{"message":"status ${status}"}`,
   }) as unknown as Response
 
 describe("ResendNotificationService", () => {
@@ -120,6 +130,90 @@ describe("ResendNotificationService", () => {
     expect(fetchMock.mock.calls[0][1].signal).toBeDefined()
   })
 
+
+  // Resend's free tier allows about two requests a second, so inviting a team walks
+  // straight into a 429. A 429 nobody retries is an invitation silently never sent.
+  describe("retrying", () => {
+    it("retries a 429 and succeeds", async () => {
+      fetchMock
+        .mockResolvedValueOnce(failResponse(429))
+        .mockResolvedValueOnce(okResponse())
+
+      const result = await service().send(invitation)
+
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(result).toEqual({ id: "email_123" })
+    })
+
+    it("retries a 500 and gives up after three attempts", async () => {
+      fetchMock.mockResolvedValue(failResponse(500))
+
+      await expect(service().send(invitation)).rejects.toThrow(/Resend rejected/)
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+    })
+
+    it("retries a transport failure", async () => {
+      fetchMock
+        .mockRejectedValueOnce(new Error("socket hang up"))
+        .mockResolvedValueOnce(okResponse())
+
+      await expect(service().send(invitation)).resolves.toEqual({ id: "email_123" })
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    })
+
+    // A 4xx is a rejection that will reject again — retrying it just delays the error.
+    it("does not retry a 403", async () => {
+      fetchMock.mockResolvedValue(failResponse(403))
+
+      await expect(service().send(invitation)).rejects.toThrow(/Resend rejected/)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it("waits for Retry-After when Resend names a delay", async () => {
+      jest.spyOn(global, "setTimeout")
+      fetchMock
+        .mockResolvedValueOnce(failResponse(429, { "retry-after": "2" }))
+        .mockResolvedValueOnce(okResponse())
+
+      await service({ retry_base_delay_ms: 999 }).send(invitation)
+
+      expect(setTimeout).toHaveBeenCalledWith(expect.any(Function), 2000)
+      ;(setTimeout as unknown as jest.SpyInstance).mockRestore()
+    })
+  })
+
+  // A redelivered event must not mail the person twice; Resend dedupes on this key.
+  it("passes an idempotency key through when the caller supplies one", async () => {
+    fetchMock.mockResolvedValue(okResponse())
+
+    await service().send({
+      ...invitation,
+      data: { ...invitation.data, idempotency_key: "member-invite-123" },
+    } as any)
+
+    expect(fetchMock.mock.calls[0][1].headers["Idempotency-Key"]).toEqual(
+      "member-invite-123"
+    )
+  })
+
+  it("omits the header when there is no key rather than sending an empty one", async () => {
+    fetchMock.mockResolvedValue(okResponse())
+    await service().send(invitation)
+    expect(fetchMock.mock.calls[0][1].headers).not.toHaveProperty("Idempotency-Key")
+  })
+
+  // Every send is logged, so a full address here is a permanent greppable list of who
+  // uses this marketplace.
+  it("masks the recipient in logs", async () => {
+    fetchMock.mockResolvedValue(okResponse())
+
+    await service().send(invitation)
+
+    const logged = logger.info.mock.calls[0][0]
+    expect(logged).toContain("s***@example.com")
+    expect(logged).not.toContain("seller@example.com")
+  })
+
   describe("validateOptions", () => {
     it("names everything that is missing", () => {
       expect(() => ResendNotificationService.validateOptions({})).toThrow(/api_key/)
@@ -132,6 +226,23 @@ describe("ResendNotificationService", () => {
     it("accepts a complete configuration", () => {
       expect(() =>
         ResendNotificationService.validateOptions({ api_key: "re_test", from: "a@b.com" })
+      ).not.toThrow()
+    })
+
+    // Presence alone lets a malformed From boot clean and fail on the first real send —
+    // the "configured but silently broken" state this hook exists to prevent.
+    it("rejects a from that is not an address", () => {
+      expect(() =>
+        ResendNotificationService.validateOptions({ api_key: "re_test", from: "marketplace" })
+      ).toThrow(/not an email address/)
+    })
+
+    it("accepts the display-name form Resend also takes", () => {
+      expect(() =>
+        ResendNotificationService.validateOptions({
+          api_key: "re_test",
+          from: "Our Marketplace <marketplace@example.com>",
+        })
       ).not.toThrow()
     })
   })

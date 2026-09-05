@@ -106,6 +106,20 @@ medusaIntegrationTestRunner({
         // silent failure this whole change exists to fix. `status` is what distinguishes
         // "sent" from "recorded": it is 'failure' when no provider could take it.
         expect(sent![0].status).toEqual("success")
+
+        // Proves the seller lookup in the subscriber actually resolves. The store name
+        // fails soft — the email still sends without it — so without an assertion a
+        // broken lookup would leave every test green and every invitation anonymous.
+        // `content` is not persisted by the notification module, but `data` is.
+        expect(sent![0].data).toMatchObject({ seller_name: "Invite Store" })
+
+        // A redelivered event must not mail the person twice. The column is unique, so
+        // this is what makes the second insert impossible rather than merely unlikely.
+        // Cast: the column exists on the model and createNotifications accepts it, but
+        // NotificationDTO does not surface it.
+        expect((sent![0] as { idempotency_key?: string }).idempotency_key).toEqual(
+          `member-invite-${res.data.member_invite.id}`
+        )
       })
 
       const waitFor = async <T>(

@@ -47,7 +47,7 @@ export default async function sendMemberInviteEmailHandler({
       // and the email address would silently be undefined.
       const { data } = await query.graph({
         entity: "member_invite",
-        fields: ["id", "email", "token", "seller_id"],
+        fields: ["id", "email", "token", "seller_id", "expires_at"],
         filters: { id: invite.id },
       })
 
@@ -64,28 +64,152 @@ export default async function sendMemberInviteEmailHandler({
       const registrationUrl =
         base && token ? `${base}/invite?token=${encodeURIComponent(token)}` : undefined
 
+      // Which store is inviting them. Without it the recipient of an invitation from a
+      // marketplace with many sellers cannot tell who is asking, and the mail reads like
+      // spam. Not fatal if the lookup comes back empty — the email is still worth sending.
+      const storeName = await sellerName(container, record.seller_id)
+      const expiresAt = record.expires_at ?? invite.expires_at
+
+      // Two layers, because they stop different things. The notification module's own
+      // `idempotency_key` is a unique column, so a redelivered event cannot even create a
+      // second row; the copy in `data` reaches the Resend provider as an Idempotency-Key,
+      // covering a retry that gets past the module. Keyed on the invite id, which is safe
+      // because resending an invite deletes the old row and creates a new one with a new
+      // id — a deliberate resend is a different key and does go out.
+      const idempotencyKey = `member-invite-${record.id}`
+
       await notificationService.createNotifications({
         to: record.email,
         channel: "email",
         template: "newSellerInvitation",
-        data: { email: record.email, registration_url: registrationUrl },
+        idempotency_key: idempotencyKey,
+        data: {
+          email: record.email,
+          registration_url: registrationUrl,
+          seller_name: storeName,
+          idempotency_key: idempotencyKey,
+        },
         content: {
-          subject: "You've been invited to sell on our marketplace",
-          html: buildInvitationHtml(record.email, registrationUrl),
+          subject: storeName
+            ? `${storeName} has invited you to sell on our marketplace`
+            : "You've been invited to sell on our marketplace",
+          html: buildInvitationHtml(record.email, registrationUrl, storeName, expiresAt),
         },
       })
 
-      logger.info(`[member-invite-email] invitation sent to ${record.email}`)
+      logger.info(`[member-invite-email] invitation sent for ${record.id}`)
     } catch (error) {
-      // Deliberately swallowed. The invitation itself is already created and valid, and
-      // an operator can resend it; throwing here would fail the event handler and, worse,
-      // make a working invite look like a failed one.
+      // Not rethrown. The invitation itself is already created and valid, and an operator
+      // can resend it; throwing here would fail the event handler and, worse, make a
+      // working invite look like a failed one.
+      //
+      // But a log line alone is invisible — the operator sees a 201 and assumes the
+      // seller was told. Record the failure on the invite so it can be seen by anyone
+      // listing invites, not just by whoever is tailing the container.
+      const message = (error as Error).message
       logger.error(
         `[member-invite-email] could not send invitation for ${invite.id}: ` +
-          `${(error as Error).message}. Is EMAIL_PROVIDER configured?`
+          `${message}. Is EMAIL_PROVIDER configured?`
       )
+      await recordFailure(container, invite.id, message).catch((markError) => {
+        logger.error(
+          `[member-invite-email] could not flag invite ${invite.id} as unsent: ` +
+            `${(markError as Error).message}`
+        )
+      })
     }
   }
+}
+
+/**
+ * The slice of the seller module this subscriber uses, declared rather than inferred.
+ *
+ * `container.resolve("seller")` is only typed when `.medusa/types/modules-bindings.d.ts`
+ * exists — a generated, gitignored file written by a Medusa build. It is present on a
+ * machine that has built or booted the app and absent in CI, so inferring the type here
+ * typechecks locally and fails on the runner. Declaring it keeps both honest.
+ */
+type SellerModuleLike = {
+  retrieveSeller: (
+    id: string,
+    config?: { select?: string[] }
+  ) => Promise<{ name?: string } | undefined>
+  retrieveMemberInvite: (
+    id: string
+  ) => Promise<{ metadata?: Record<string, unknown> | null } | undefined>
+  updateMemberInvites: (data: {
+    id: string
+    metadata: Record<string, unknown>
+  }) => Promise<unknown>
+}
+
+const sellerModule = (container: SubscriberArgs["container"]) =>
+  container.resolve("seller") as unknown as SellerModuleLike
+
+/**
+ * The name of the store doing the inviting, or undefined if it cannot be read. Never
+ * throws: a missing store name degrades the email, it does not justify not sending it.
+ */
+async function sellerName(
+  container: SubscriberArgs["container"],
+  sellerId?: string
+): Promise<string | undefined> {
+  if (!sellerId) {
+    return undefined
+  }
+  try {
+    const seller = await sellerModule(container).retrieveSeller(sellerId, {
+      select: ["id", "name"],
+    })
+    return seller?.name || undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Marks the invite as having failed to send, in its metadata. `member_invite` has no
+ * column for this and adding one would need a migration into a module this project does
+ * not own; metadata is the seam that exists.
+ */
+async function recordFailure(
+  container: SubscriberArgs["container"],
+  inviteId: string,
+  message: string
+) {
+  const sellerService = sellerModule(container)
+  const existing = await sellerService.retrieveMemberInvite(inviteId)
+
+  await sellerService.updateMemberInvites({
+    id: inviteId,
+    metadata: {
+      ...(existing?.metadata ?? {}),
+      email_delivery: "failed",
+      email_error: message.slice(0, 500),
+      email_failed_at: new Date().toISOString(),
+    },
+  })
+}
+
+/**
+ * "11 September 2026", or undefined if the value is missing or unparseable. UTC on
+ * purpose: the recipient's timezone is unknown, and a date that silently shifts by a day
+ * is worse than one that is explicit about the day it means.
+ */
+function formatExpiry(expiresAt?: string | Date) {
+  if (!expiresAt) {
+    return undefined
+  }
+  const date = expiresAt instanceof Date ? expiresAt : new Date(expiresAt)
+  if (Number.isNaN(date.getTime())) {
+    return undefined
+  }
+  return date.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  })
 }
 
 /**
@@ -109,8 +233,27 @@ function escapeHtml(value: string) {
  * same whether it is sent from here or from that workflow, should a future release start
  * calling it.
  */
-export function buildInvitationHtml(email: string, registrationUrl?: string) {
+export function buildInvitationHtml(
+  email: string,
+  registrationUrl?: string,
+  storeName?: string,
+  expiresAt?: string | Date
+) {
   const safeEmail = escapeHtml(email)
+  const safeStore = storeName ? escapeHtml(storeName) : undefined
+  const heading = safeStore
+    ? `${safeStore} has invited you to sell on our marketplace`
+    : "You've been invited to sell on our marketplace"
+  const lead = safeStore
+    ? `<strong>${safeStore}</strong> has invited <strong>${safeEmail}</strong> to join them as a seller. Accept the invitation to set up your store, list products, and start selling.`
+    : `<strong>${safeEmail}</strong> has been invited to join our marketplace as a seller. Accept the invitation to set up your store, list products, and start selling.`
+
+  // A link that has quietly expired is worse than one that says when it will.
+  const expiry = formatExpiry(expiresAt)
+  const expiryLine = expiry
+    ? `<tr><td style="font-size:13px;color:#71717a;padding-top:16px;">This invitation expires on ${escapeHtml(expiry)}.</td></tr>`
+    : ""
+
   const cta = registrationUrl
     ? `<tr>
         <td style="padding: 24px 0 0;">
@@ -129,15 +272,16 @@ export function buildInvitationHtml(email: string, registrationUrl?: string) {
         <table width="560" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:8px;padding:40px;">
           <tr>
             <td style="font-size:20px;font-weight:600;color:#18181b;padding-bottom:16px;">
-              You've been invited to sell on our marketplace
+              ${heading}
             </td>
           </tr>
           <tr>
             <td style="font-size:14px;color:#52525b;line-height:1.6;">
-              An invitation has been sent to <strong>${safeEmail}</strong> to join as a seller. You can set up your store, list products, and start selling.
+              ${lead}
             </td>
           </tr>
           ${cta}
+          ${expiryLine}
           <tr>
             <td style="font-size:12px;color:#a1a1aa;padding-top:32px;border-top:1px solid #e4e4e7;">
               If you did not expect this invitation, you can ignore this email.
