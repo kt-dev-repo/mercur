@@ -403,6 +403,24 @@ medusaIntegrationTestRunner({
             res.data.orders.map((o: { id: string }) => o.id)
           )
         }
+        // The shopper gets exactly one confirmation for the whole purchase, not one per
+        // seller. Subscribing to `order.placed` instead of `order_group.created` would
+        // send two here, and neither would show the whole basket.
+        const notificationService = getContainer().resolve(Modules.NOTIFICATION)
+        const confirmations = await waitFor(async () => {
+          const rows = await notificationService.listNotifications({
+            to: "shopper@checkout.test",
+            template: "orderConfirmation",
+          })
+          return rows.length ? rows : null
+        })
+        expect(confirmations).not.toBeNull()
+        expect(confirmations!).toHaveLength(1)
+        // `status` separates delivered from merely recorded: the row is written before a
+        // provider ever sees it.
+        expect(confirmations![0].status).toEqual("success")
+        expect(confirmations![0].data).toMatchObject({ seller_count: 2 })
+
         expect(seenBySeller.get(sellers.a.id)).toHaveLength(1)
         expect(seenBySeller.get(sellers.b.id)).toHaveLength(1)
         expect(seenBySeller.get(sellers.a.id)).not.toEqual(seenBySeller.get(sellers.b.id))
@@ -410,6 +428,20 @@ medusaIntegrationTestRunner({
           orders.map((o) => o.id).sort()
         )
       })
+
+      const waitFor = async <T>(
+        check: () => Promise<T | null>,
+        attempts = 25
+      ): Promise<T | null> => {
+        for (let i = 0; i < attempts; i++) {
+          const result = await check()
+          if (result) {
+            return result
+          }
+          await new Promise((r) => setTimeout(r, 200))
+        }
+        return null
+      }
     })
   },
 })
