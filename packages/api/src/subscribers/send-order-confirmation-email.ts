@@ -91,6 +91,14 @@ export default async function sendOrderConfirmationEmailHandler({
     // `order_group.created` must not send the customer a second receipt.
     const idempotencyKey = `order-confirmation-${group.id}`
 
+    // Persisted so a broken seller lookup is visible. `content` is not stored by the
+    // notification module, so without this an email that silently fell back to
+    // "Order #12" for every seller would leave every assertion green — the same soft
+    // failure the seller invitation had before `seller_name` was asserted.
+    const sellerNames = orders
+      .map((order) => order.seller?.name)
+      .filter((name): name is string => Boolean(name))
+
     await notificationService.createNotifications({
       to: email,
       channel: "email",
@@ -101,6 +109,7 @@ export default async function sendOrderConfirmationEmailHandler({
         order_group_id: group.id,
         display_id: group.display_id,
         seller_count: orders.length,
+        seller_names: sellerNames,
         idempotency_key: idempotencyKey,
       },
       content: {

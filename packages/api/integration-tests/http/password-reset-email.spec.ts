@@ -12,17 +12,25 @@ const PASSWORD = "supersecret"
  * route answered 201 and the mail went nowhere. The reset form appeared to work and no
  * email ever arrived — the same silent failure the seller invitation had.
  *
- * Uses the `user` actor type because an operator fixture is cheap; the per-actor URL
- * routing is covered by unit tests, which can vary the environment freely.
+ * All three actor types are exercised, because the routing between them is the part that
+ * breaks in a way nobody notices: a seller sent to the admin panel gets a link that looks
+ * fine and cannot work. The unit tests vary the environment freely; these prove the real
+ * event carries the actor type through to the right front end.
  *
- * One `it`: the runner restores the database between tests.
+ * Each test stands alone — the runner restores the database between them, so every
+ * identity is created in `beforeAll`.
  */
 medusaIntegrationTestRunner({
   inApp: true,
-  env: { MERCUR_BACKEND_URL: "https://api.reset.test" },
+  env: {
+    MERCUR_BACKEND_URL: "https://api.reset.test",
+    MERCUR_STOREFRONT_URL: "https://shop.reset.test",
+  },
   testSuite: ({ api, getContainer }) => {
     describe("password reset email", () => {
       const email = "operator@reset.test"
+      const memberEmail = "seller@reset.test"
+      const customerEmail = "shopper@reset.test"
 
       beforeAll(async () => {
         const container = getContainer()
@@ -36,6 +44,28 @@ medusaIntegrationTestRunner({
         await auth.updateAuthIdentities([
           { id: reg.authIdentity!.id, app_metadata: { user_id: user.id } },
         ])
+
+        // A seller, created the way one actually arrives, so the member identity exists.
+        const registerToken = (
+          await api.post("/auth/member/emailpass/register", {
+            email: memberEmail,
+            password: PASSWORD,
+          })
+        ).data.token
+        await api.post(
+          "/vendor/sellers",
+          {
+            name: "Reset Store",
+            email: memberEmail,
+            currency_code: "eur",
+            member_email: memberEmail,
+          },
+          { headers: { authorization: `Bearer ${registerToken}` } }
+        )
+
+        await auth.register("emailpass", {
+          body: { email: customerEmail, password: PASSWORD },
+        })
       })
 
       it("emails a reset link to an operator who asks for one", async () => {
@@ -49,7 +79,7 @@ medusaIntegrationTestRunner({
         const notificationService = container.resolve(Modules.NOTIFICATION)
         const sent = await waitFor(async () => {
           const rows = await notificationService.listNotifications({ to: email })
-          return rows.length ? rows : null
+          return settled(rows)
         })
 
         expect(sent).not.toBeNull()
@@ -72,6 +102,55 @@ medusaIntegrationTestRunner({
         )
       })
 
+      it("sends a seller to the vendor panel, not the admin one", async () => {
+        const container = getContainer()
+
+        const res = await api.post("/auth/member/emailpass/reset-password", {
+          identifier: memberEmail,
+        })
+        expect(res.status).toEqual(201)
+
+        const notificationService = container.resolve(Modules.NOTIFICATION)
+        const sent = await waitFor(async () => {
+          const rows = await notificationService.listNotifications({ to: memberEmail })
+          return settled(rows)
+        })
+
+        expect(sent).not.toBeNull()
+        expect(sent![0].status).toEqual("success")
+        expect(sent![0].data).toMatchObject({ actor_type: "member" })
+
+        const url = (sent![0].data as { reset_url?: string }).reset_url
+        expect(url).toContain("https://api.reset.test/seller/reset-password?token=")
+        // The failure that matters: a seller handed the operator's panel.
+        expect(url).not.toContain("/dashboard/")
+      })
+
+      it("sends a customer to the storefront", async () => {
+        const container = getContainer()
+
+        const res = await api.post("/auth/customer/emailpass/reset-password", {
+          identifier: customerEmail,
+        })
+        expect(res.status).toEqual(201)
+
+        const notificationService = container.resolve(Modules.NOTIFICATION)
+        const sent = await waitFor(async () => {
+          const rows = await notificationService.listNotifications({ to: customerEmail })
+          return settled(rows)
+        })
+
+        expect(sent).not.toBeNull()
+        expect(sent![0].status).toEqual("success")
+        expect(sent![0].data).toMatchObject({ actor_type: "customer" })
+
+        const url = (sent![0].data as { reset_url?: string }).reset_url
+        expect(url).toContain("https://shop.reset.test/reset-password?token=")
+        // A customer must never be sent into either operator-facing panel.
+        expect(url).not.toContain("/dashboard/")
+        expect(url).not.toContain("/seller/")
+      })
+
       it("stays silent about an address that has no account", async () => {
         const container = getContainer()
         const unknown = "nobody@reset.test"
@@ -89,6 +168,12 @@ medusaIntegrationTestRunner({
         const rows = await notificationService.listNotifications({ to: unknown })
         expect(rows).toHaveLength(0)
       })
+
+      // `createNotifications` writes the row and hands it to a provider afterwards, so a
+      // row can exist while `status` is still "pending". Polling for existence alone
+      // makes every status assertion a race that a slower runner loses.
+      const settled = <T extends { status?: string }>(rows: T[]): T[] | null =>
+        rows.length && rows.every((r) => r.status !== "pending") ? rows : null
 
       const waitFor = async <T>(
         check: () => Promise<T | null>,
