@@ -1,17 +1,17 @@
 ---
 name: deploy-dokploy
-description: Change anything under deploy/ — the Dokploy compose stack, the production config overlay, boot guards, backups, or the smoke suite. Use when adding a setting, a module, or a service to the deployment, or when a container behaves differently from local development.
+description: Change anything under deploy/ or the deployment config overlay — the Dokploy compose stack, boot guards, backups, or the smoke suite. Use when adding a setting, a module, or a service to the deployment, or when a container behaves differently from local development.
 ---
 
 # Deploying on Dokploy
 
 `deploy/` is a self-contained production stack: a Dockerfile, a Compose file for Dokploy,
-a production config overlay, a backup sidecar, and an end-to-end smoke suite.
+a backup sidecar, and an end-to-end smoke suite. The deployment *settings* live outside
+it, in `packages/api/src/lib/production-overlay.ts`.
 
 | File | What it is |
 |---|---|
 | `docker-compose.yml` | `postgres`, `redis`, `backend`, `worker`, `backup` on `dokploy-network`, routed by Traefik |
-| `medusa-config.production.ts` | The production config. Mirrors `packages/api/medusa-config.ts` with numbered `OVERLAY` blocks |
 | `.env.example` | Every setting, documented |
 | `README.md` | The operator-facing guide |
 | `smoke-test.sh` | Boots a real stack and asserts against it. Pull requests only (~8 min) |
@@ -25,10 +25,28 @@ assertion to `deploy/smoke-test.sh` if the change has a failure mode worth catch
 
 ## The overlay
 
-`medusa-config.production.ts` is not upstream code. It is the development config plus
-numbered blocks — `OVERLAY 1/6` through `6/6` — for Redis, worker mode, cookies, file
-storage, email, and payments. Keep everything outside those blocks identical to
-`packages/api/medusa-config.ts`, and renumber the whole set when you add one.
+Deployment settings — Redis, worker mode, cookie security, object storage, email,
+payments — live in **`packages/api/src/lib/production-overlay.ts`**.
+`packages/api/medusa-config.ts` is upstream's file plus two lines that delegate to it.
+
+**Add new deployment settings to the overlay, never to `medusa-config.ts`.** The overlay
+is an additive file, so an upstream change to their config can never conflict with it.
+That is the whole point of the arrangement: `deploy/medusa-config.production.ts` used to
+be a 419-line *copy* of the 83-line upstream config, and when upstream changed theirs the
+copy silently kept the old version — a green build running configuration nobody wrote.
+
+The overlay acts **only on variables that are explicitly set**. Unset means "leave the
+base config alone", not "apply a production default" — which is what lets one file serve
+both `npm run dev` and the container. `docker-compose.yml` always passes
+`EMAIL_PROVIDER`, `FILE_STORAGE`, `PAYMENTS` and `MEDUSA_WORKER_MODE` explicitly, with
+defaults of its own.
+
+Two consequences worth knowing:
+
+- A setting that is only meaningful in production still needs a sensible "unset" branch,
+  or development changes behaviour the moment you add it.
+- Running the image without Compose and without `EMAIL_PROVIDER` leaves the development
+  notification provider in place, which logs mail rather than dropping it.
 
 ## Boot guards
 
@@ -74,13 +92,23 @@ docker run --rm --entrypoint node -e EMAIL_PROVIDER=nonsense "$IMAGE" \
   -e "try{require('/app/medusa-config.js');console.log('LOADED')}catch(e){console.log('REFUSED: '+e.message)}"
 ```
 
-Locally, without building an image, transpile the overlay and require it — this executes
-the guards, which a typecheck does not:
+Locally, without building an image, register a `.ts` require hook and require the config
+directly — this executes the guards, which a typecheck does not:
 
-```bash
-# from the repo root, with node_modules present
-npx swc deploy/medusa-config.production.ts -o /tmp/cfg.js  # or @swc/core programmatically
+```js
+const { transformFileSync } = require("@swc/core");
+require.extensions[".ts"] = (mod, f) =>
+  mod._compile(transformFileSync(f, {
+    jsc: { parser: { syntax: "typescript" } }, module: { type: "commonjs" },
+  }).code, f);
+require("./packages/api/medusa-config.ts");
 ```
+
+**Verify a config change by comparing behaviour, not by reading it.** Dump the fully
+normalised object `withMercur` returns across an environment matrix — every combination
+of the settings, plus each refusal — and diff old against new with keys sorted, since key
+order varies and means nothing. That is how the overlay inversion was shown to be
+identical in 18 of 18 compose-faithful environments.
 
 `defineConfig` validates shape only. A wrong `resolve` string still "loads" and then fails
 at boot, so check module paths separately with `require.resolve`.
