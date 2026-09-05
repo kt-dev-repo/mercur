@@ -1,0 +1,104 @@
+# Tell us when upstream publishes a new Mercur or Medusa release.
+#
+# This repository consumes @mercurjs/* from npm and shares no history with
+# mercurjs/mercur, so upgrading is a version bump rather than a merge — but nothing
+# otherwise announces that a bump is available, and a pull-based procedure nobody is
+# reminded of does not get followed.
+#
+# Deliberately not Dependabot. This install needs `npm install --force` to resolve at all
+# (react-hook-form@7.49.1 against @hookform/resolvers@5.4.0, which peer-requires ^7.55.0),
+# and Dependabot's resolver has no equivalent flag, so it either fails or opens PRs that
+# cannot install. Reading dist-tags cannot fail that way.
+name: Upstream check
+
+on:
+  schedule:
+    - cron: "0 9 * * 1" # Mondays, 09:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    name: Compare pinned versions against npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - id: check
+        name: Read dist-tags
+        run: |
+          set -euo pipefail
+
+          # The version every @mercurjs/* package is pinned to, taken from the one that
+          # is always present rather than assumed.
+          PINNED_MERCUR=$(node -p "require('./packages/api/package.json').dependencies['@mercurjs/core']")
+          PINNED_MEDUSA=$(node -p "require('./package.json').overrides['@medusajs/medusa']")
+
+          LATEST_MERCUR=$(npm view @mercurjs/core version)
+          LATEST_MEDUSA=$(npm view @medusajs/medusa version)
+
+          echo "mercur: pinned $PINNED_MERCUR, latest $LATEST_MERCUR"
+          echo "medusa: pinned $PINNED_MEDUSA, latest $LATEST_MEDUSA"
+
+          BODY=""
+          if [ "$PINNED_MERCUR" != "$LATEST_MERCUR" ]; then
+            BODY="${BODY}- \`@mercurjs/*\`: pinned **$PINNED_MERCUR**, npm latest **$LATEST_MERCUR**\n"
+          fi
+          if [ "$PINNED_MEDUSA" != "$LATEST_MEDUSA" ]; then
+            BODY="${BODY}- \`@medusajs/*\`: pinned **$PINNED_MEDUSA**, npm latest **$LATEST_MEDUSA**\n"
+          fi
+
+          if [ -z "$BODY" ]; then
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "body<<EOF_BODY"
+              printf "%b" "$BODY"
+              echo "EOF_BODY"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or update an issue
+        if: steps.check.outputs.drift == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRIFT: ${{ steps.check.outputs.body }}
+        run: |
+          set -euo pipefail
+
+          TITLE="Upstream update available"
+
+          BODY=$(printf '%s\n\n%s\n' "$DRIFT" \
+            'Upgrade with:
+
+```bash
+npm run upgrade:mercur -- --mercur <version>          # and/or --medusa <version>
+npm install --force
+npm run codegen
+```
+
+Then run the verification set. `version-pins.unit.spec.ts` fails the build if the
+dependencies and the root `overrides`/`resolutions` disagree, so a partial bump cannot
+merge. Integration tests must run from a flat clone, not a nested worktree.
+
+Do **not** merge from upstream — this repository shares no history with it. See
+"Relationship to upstream Mercur" in the README.')
+
+          # Reuse the open issue rather than filing a new one every Monday, which is how
+          # a useful notification turns into noise that gets muted.
+          EXISTING=$(gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number // empty')
+
+          if [ -n "$EXISTING" ]; then
+            gh issue edit "$EXISTING" --body "$BODY"
+            echo "Updated issue #$EXISTING"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+          fi

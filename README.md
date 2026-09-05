@@ -218,12 +218,32 @@ That distinction decides how you take upstream changes.
 **Bump versions; never merge.** With no shared history a merge from upstream is
 meaningless.
 
-1. Check what is published: `npm view @mercurjs/core dist-tags`
-2. Bump the `@mercurjs/*` pins in `packages/api/package.json`, and the `@medusajs/*`
-   entries in the root `package.json` under both `resolutions` and `overrides` — they are
-   duplicated so npm and pnpm consumers agree
-3. `npm install --force && npm run codegen`
-4. Run the full verification set under [Testing](#testing)
+You do not have to watch for releases: `.github/workflows/upstream-check.yml` runs weekly,
+compares the pinned versions against npm, and opens (or updates) a single issue when they
+drift. To apply one:
+
+```bash
+npm run upgrade:mercur -- --mercur 2.3.4            # and/or --medusa 2.19.0
+npm install --force
+npm run codegen
+```
+
+Then run the full verification set under [Testing](#testing).
+
+`scripts/bump-mercur.mjs` exists because the versions live in **three** places that must
+move together — each workspace's dependencies, the root `overrides` (npm), and the root
+`resolutions` (pnpm/yarn). Editing them by hand is where partial upgrades come from, and a
+partial upgrade has no symptom: `package.json` claims one version, the override pins
+another, npm installs the override, and nothing reports the disagreement.
+`packages/api/src/lib/__tests__/version-pins.unit.spec.ts` fails the build when they
+disagree, so a partial bump cannot merge.
+
+The script refuses to pin a version that is not published, so a typo fails before it has
+rewritten anything.
+
+> Dependabot is deliberately not used. This install needs `npm install --force` to resolve
+> at all, and Dependabot's resolver has no equivalent — it would either fail or open pull
+> requests that cannot install.
 
 ### Diffing against the template
 
@@ -263,6 +283,17 @@ The shopper-facing storefront is **not** in this repository. `@mercurjs/storefro
 requires React 19 while the panels here are pinned to React 18.3.1, so it is deployed as a
 separate service from a separate repository. The environment variables that tie the two
 together are documented in [`deploy/README.md`](deploy/README.md).
+
+It is also **not tracked against upstream**. Unlike the backend and the panels — which are
+published npm packages and upgrade by version bump — `@mercurjs/storefront` is not
+published (`private: true` upstream, 404 on npm), so it can only exist as copied source.
+It was scaffolded once from `apps/storefront@2.3.4-canary.3` and is owned outright from
+that point.
+
+That is a deliberate trade. A storefront is the part of a marketplace you customise most,
+and merging upstream's demo design into a customised storefront is worse than not doing
+it. The cost is that upstream's storefront fixes do not reach you automatically; its
+README lists the known issues carried over, which you now own.
 
 ## AI agents
 
