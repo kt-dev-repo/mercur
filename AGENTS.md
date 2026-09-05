@@ -30,7 +30,11 @@ It covers the domain model (sellers, products, offers, attributes, commissions, 
 ## Configuration Files
 
 - `blocks.json` — block configuration and registry path aliases
-- `packages/api/medusa-config.ts` — MedusaJS configuration
+- `packages/api/medusa-config.ts` — MedusaJS configuration. Upstream's file plus two
+  lines delegating to `packages/api/src/lib/production-overlay.ts`, which holds every
+  deployment setting (Redis, worker mode, cookies, object storage, email, payments) and
+  is a no-op unless those variables are set. Keep deployment settings there, not here,
+  so an upstream change to this file never conflicts.
 - `apps/admin/vite.config.ts` — admin dashboard build config
 - `apps/vendor/vite.config.ts` — vendor portal build config
 
@@ -88,7 +92,7 @@ like a broken API rather than what they are:
 
 ## Changing anything under `deploy/`
 
-`deploy/` holds a Dockerfile, a Compose stack, a production config overlay, a backup
+`deploy/` holds a Dockerfile, a Compose stack, a backup
 sidecar and the smoke suite. `deploy/README.md` is the operator-facing guide and is
 expected to stay accurate — several defects in this project were documentation drifting
 away from behaviour, not code. If you change a setting, change the guide and

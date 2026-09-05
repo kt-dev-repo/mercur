@@ -14,10 +14,14 @@
 # Build context is the REPOSITORY ROOT, not deploy/:
 #   docker build -f deploy/Dockerfile --build-arg MERCUR_BACKEND_URL=... .
 #
-# Nothing under the upstream project tree is modified on disk. The only override
-# happens inside the image: deploy/medusa-config.production.ts is copied over
-# packages/api/medusa-config.ts after the sources land, so the checked-in file
-# stays pristine for future Mercur upgrades.
+# The image builds the checked-in sources unmodified. There is no config swap: the
+# deployment settings live in packages/api/src/lib/production-overlay.ts, which
+# medusa-config.ts delegates to and which is a no-op unless the relevant variables
+# are set. docker-compose.yml always sets them.
+#
+# This used to copy deploy/medusa-config.production.ts over packages/api/medusa-config.ts.
+# That file was a duplicate of the upstream config, and duplicates rot: when upstream
+# changed medusa-config.ts the copy silently kept the old version.
 # ---------------------------------------------------------------------------
 
 # ---------- Stage 1: build ----------
@@ -69,11 +73,6 @@ COPY packages/api/package.json ./packages/api/
 RUN npm install --force --no-audit --no-fund
 
 COPY . .
-
-# Production config overlay — see the header. This is the ONLY place the upstream
-# project tree is altered, and it happens in the image, never in Git. It adds the
-# Redis modules and `workerMode`; everything else matches the upstream file.
-COPY deploy/medusa-config.production.ts ./packages/api/medusa-config.ts
 
 # The panels import route types from `@acme/api/_generated`, which packages/api only
 # exposes once codegen has written .mercur/routes.d.ts. Turborepo builds the panels
