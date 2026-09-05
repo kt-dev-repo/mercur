@@ -1,6 +1,6 @@
 # Development plan — Foundation, then Go-live
 
-Status: **Stage 1 — 19 of 20 done; Stage 2 — 6 of 14, email done.** Based on `main`.
+Status: **Stage 1 — 19 of 20 done; Stage 2 — 7 of 15, email done.** Based on `main`.
 See `PLAN-file-storage.md` for the storage work this builds on.
 
 Stage 1 landed so far: regression tests for the seed and seller scoping, GitHub Actions
@@ -8,10 +8,11 @@ running typecheck/lint and three jest suites, a 33-assertion container smoke sui
 pull requests, a backup restore drill, and flow coverage of the seller lifecycle and the
 product approval pipeline. Remaining: multi-seller checkout.
 
-Stage 2b — email — is **done**. Seller invitation email goes out through Resend, and
-real delivery is proven end to end against the live API, not just mocked. What remains in
-Stage 2 is Stripe (2a, needs test keys) and the two emails nobody has written yet:
-password reset and order confirmation.
+Stage 2b — email — is **done**. Seller invitation email goes out through Resend, real
+delivery is proven end to end against the live API rather than mocked, and the integration
+has since been reviewed and hardened against the failure modes that review found. What
+remains in Stage 2 is Stripe (2a, needs test keys) and the two emails nobody has written
+yet: password reset and order confirmation.
 
 ## Context
 
@@ -106,7 +107,7 @@ shell script. Both are fast to check at container level.
 
 Needs credentials, but **not paid ones**: Stripe test-mode keys and a free email tier
 unblock all of it, and both are available immediately.
-Progress: **6 / 14**
+Progress: **7 / 15**
 
 ## 2a. Stripe Connect — payments and payouts
 
@@ -140,15 +141,36 @@ Resend rather than SendGrid, chosen when this was scoped.
 - [x] Verified: 9 unit tests, an integration test asserting the notification reaches
       `status: "success"` (it fails with `"failure"` when no provider is configured), and
       the `EMAIL_PROVIDER` boot guards in the smoke suite
-- [x] The address and the registration URL are escaped before they go into the email
-      body. Both are interpolated into markup and neither is trusted; 5 unit tests cover
-      it (2026-09-05)
+- [x] **Hardened after a review of the live integration** (2026-09-05). Five defects, all
+      of the same family — the thing fails and nobody finds out:
+      - The address, the URL and the store name are escaped before they enter the markup.
+        None of the three is trusted input
+      - A failed send is recorded on the invite's `metadata` (`email_delivery`,
+        `email_error`, `email_failed_at`). It is still not rethrown — a failed email must
+        not roll back a valid invite — but a log line alone was invisible, and the
+        operator saw 201 and assumed the seller had been told
+      - Three attempts on 429, 5xx and transport failures, honouring `Retry-After`. Resend
+        allows ~2 requests/second, so inviting a team hit a 429 that nobody retried. A 4xx
+        still fails at once: a rejection will reject again
+      - Deduplicated twice over — the notification module's unique `idempotency_key` makes
+        a second row impossible, and the provider sends an `Idempotency-Key` for anything
+        that gets past it. Keyed on the invite id, which is safe because a resend deletes
+        the invite and creates a new one
+      - The email names the inviting store, in the subject and the body, and states the
+        expiry date. It previously read "An invitation has been sent to <address>" —
+        third person, naming nobody, indistinguishable from spam
+      - `validateOptions` checks the shape of `from`, not just its presence; recipients
+        are masked in provider logs
 - [x] **Real delivery through Resend** — done 2026-09-05 against a verified domain. The
       full path, on the deploy stack rather than in a test: admin creates a seller,
       `POST /admin/sellers/:id/members/invite` returns 201, `member_invite.created`
       reaches the subscriber **in the worker container**, and Resend returns a message id.
       Creating a seller with a `member` invites that address too, so both trigger paths
       deliver
+- [x] Coverage: 29 unit tests (from 9), 10 integration, 19 module. The integration test
+      asserts `data.seller_name` reaches the notification — `content` is not persisted by
+      the notification module — which is what proves the seller lookup resolves rather
+      than failing soft into an anonymous email
 - [ ] Password reset and order confirmation. Neither exists: Medusa emits the events,
       nothing listens, so each needs its own subscriber and template. The seller invitation
       is the only email in the system
