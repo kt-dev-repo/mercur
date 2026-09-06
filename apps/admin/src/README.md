@@ -17,7 +17,7 @@ const BlogPage = () => {
   return (
     <div>
       <h1>Blog Posts</h1>
-      <p>My custom vendor page</p>
+      <p>My custom admin page</p>
     </div>
   )
 }
@@ -25,7 +25,7 @@ const BlogPage = () => {
 export default BlogPage
 ```
 
-This page will be accessible at `/blog` in the vendor portal.
+This page will be accessible at `/blog` in the admin panel.
 
 ## 2. File-Based Routing
 

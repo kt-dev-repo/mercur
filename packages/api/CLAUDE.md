@@ -24,10 +24,13 @@ If `src/` does not exist yet, create only the folders needed for the feature:
 - `src/subscribers`
 - `src/jobs`
 - `src/scripts`
+- `src/lib` — shared helpers with no Medusa surface of their own
 
 ## Choosing the right backend surface
 
 - Use a **route** when you need an HTTP endpoint.
+- Use **`src/lib`** for logic with no Medusa surface — pure helpers, and the deployment
+  overlay. Anything there is unit-testable, which is the cheapest place for logic to live.
 - Use a **module** when you need a persistent domain model or service boundary.
 - Use a **workflow** when the feature is a multi-step business process.
 - Use a **link** when the feature defines a relationship across modules.
@@ -69,7 +72,18 @@ Run route codegen when a task changes:
 
 If a route task changes generated types, confirm `@acme/api/_generated` still makes sense for consumers.
 
-## `medusa-config.ts`
+## `medusa-config.ts` and the deployment overlay
+
+`medusa-config.ts` is upstream's file plus two lines that delegate to
+`src/lib/production-overlay.ts`. **Deployment settings go in the overlay, never in the
+config.** The overlay is additive, so upstream changes to their config cannot conflict
+with it; editing the config directly re-creates the drift the arrangement removed.
+
+The overlay acts only on variables that are **explicitly set** — unset means "leave the
+base config alone", not "apply a production default". That is what lets one file serve
+both `npm run dev` and the container, so any new setting needs a sensible unset branch or
+development silently changes behaviour. Its guards are unit-tested in
+`src/lib/__tests__/production-overlay.unit.spec.ts`.
 
 Review `medusa-config.ts` when a task:
 - adds a module
