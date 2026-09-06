@@ -1,8 +1,14 @@
 # Development plan — Foundation, then Go-live
 
 Status: **Stage 1 — complete (20 of 20); Stage 2 — 13 of 15.** Based on `main`.
-Only the two Stripe steps that need test keys remain.
-See `PLAN-file-storage.md` for the storage work this builds on.
+Only the two Stripe steps that need test keys remain; both are blocked on credentials,
+not on work.
+
+Coverage as of 2026-09-06: **90 unit, 19 module, 15 integration**, plus the container
+smoke suite on pull requests.
+
+See `PLAN-file-storage.md` for the storage work this builds on, and
+`PLAN-aba-payway-khqr.md` for the research that shaped the `PAYMENTS` switch.
 
 Stage 1 landed so far: regression tests for the seed and seller scoping, GitHub Actions
 running typecheck/lint and three jest suites, a container smoke suite on
@@ -14,6 +20,33 @@ delivery is proven end to end against the live API rather than mocked, and the i
 has since been reviewed and hardened against the failure modes that review found. Password reset and
 order confirmation have since been written too, so **Stage 2b is complete** and Stripe
 (2a, needs test keys) is all that remains in Stage 2.
+
+## Work done outside the two stages
+
+The stages describe features. Three structural changes landed alongside them and are worth
+recording, because each removed a recurring cost rather than adding a capability.
+
+- **The production config overlay was inverted** (2026-09-05).
+  `deploy/medusa-config.production.ts` was a 419-line file containing a copy of the
+  83-line upstream config, swapped in by the Dockerfile. Copies rot: when upstream changed
+  their config, the copy silently kept the old one. Deployment settings now live in
+  `packages/api/src/lib/production-overlay.ts`, which `medusa-config.ts` delegates to in
+  two lines. The conflict surface went from 83 duplicated lines to 2, and the guards —
+  previously reachable only from the container smoke suite — gained 19 unit tests.
+- **Upstream upgrades were automated** (2026-09-06). A weekly workflow opens an issue when
+  the pins fall behind npm; `npm run upgrade:mercur` rewrites all three pin locations and
+  refuses unpublished versions; a unit test fails the build if they disagree. Dependabot
+  was rejected deliberately — this install needs `npm install --force`, which its resolver
+  cannot express.
+- **The storefront became its own repository**
+  ([kt-dev-repo/mercur-storefront](https://github.com/kt-dev-repo/mercur-storefront),
+  2026-09-06). `@mercurjs/storefront` needs React 19 while the panels are pinned to 18.3.1,
+  and it is not published to npm, so it can only exist as copied source. It is owned
+  outright rather than tracked against upstream.
+
+An audit against upstream's `templates/basic` on 2026-09-06 confirmed this repo is a
+strict superset: all 72 template files present, no missing scripts, dependencies, modules
+or workflows, and every functional directory identical to upstream's own reference app.
 
 ## What is next, and in what order
 
@@ -249,7 +282,7 @@ Resend rather than SendGrid, chosen when this was scoped.
 | `packages/api/integration-tests/http/*.spec.ts` | 1 | New — seed idempotency, seller scoping, marketplace flows |
 | `deploy/smoke-test.sh` | 1 | New — the manual suite, written down |
 | `packages/api/.env.test` | 1 | Populate (currently empty) |
-| `deploy/medusa-config.production.ts` | 2 | `OVERLAY 5` payments, `OVERLAY 6` notifications |
+| `packages/api/src/lib/production-overlay.ts` | 2 | Payments and notifications, alongside Redis, cookies and storage |
 | `packages/api/package.json` | 2 | `@mercurjs/payout-stripe-connect` |
 | `deploy/docker-compose.yml`, `.env.example`, `README.md` | 2 | Env pass-through and setup sections |
 | `packages/api/src/scripts/seed.ts` | 2 | Add Stripe to region payment providers when enabled |

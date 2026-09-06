@@ -947,9 +947,39 @@ Omitting it makes migrations fail with a misleading "incorrect database URL".
 
 ### Adding the storefront
 
-The Next.js storefront deploys separately. Add it as its own Dokploy application,
-point `MEDUSA_BACKEND_URL` at this backend, and create a publishable API key in
-the admin panel for `NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY`.
+The shopper-facing storefront lives in a **separate repository** —
+[kt-dev-repo/mercur-storefront](https://github.com/kt-dev-repo/mercur-storefront) — and
+deploys as its own Dokploy application on its own hostname. It is not part of this stack.
+
+It is separate because `@mercurjs/storefront` requires React 19 while the admin and vendor
+panels here are pinned to React 18.3.1. It is also not published to npm, so it exists as
+copied source and is owned outright rather than tracked against upstream.
+
+Deploy it from that repository's `deploy/docker-compose.yml`, joining the same
+`dokploy-network` so Traefik can route it, with a different `DOMAIN` and `TRAEFIK_ROUTER`
+from this stack.
+
+#### The contract between the two
+
+The two are joined by environment variables, not code. **Every row must agree on both
+sides, and when they disagree the feature fails quietly** — no error, no log line.
+
+| Storefront | This backend | What breaks when they disagree |
+|---|---|---|
+| `MEDUSA_BACKEND_URL` | this stack's public origin | Nothing loads |
+| `NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY` | publishable key from the seed, or **Settings → Publishable API keys** | Every store API call is rejected |
+| `NEXT_PUBLIC_BASE_URL` | `MERCUR_STOREFRONT_URL` | Customer password-reset emails link to the wrong host, or carry no link |
+| `REVALIDATE_SECRET` | `STOREFRONT_REVALIDATE_SECRET` | The revalidate hook is rejected; the storefront serves stale pages indefinitely |
+| — | `STOREFRONT_REVALIDATE_URL` | Must point at the storefront, or the hook reaches nothing |
+| `NEXT_PUBLIC_VENDOR_URL` | `MERCUR_VENDOR_URL` | "Sell with us" links go nowhere useful |
+| `NEXT_PUBLIC_STRIPE_KEY` | the **publishable** twin of `STRIPE_API_KEY` | Checkout cannot mount Stripe elements |
+
+> `NEXT_PUBLIC_STRIPE_KEY` is the publishable key (`pk_…`). The secret key (`sk_…`) belongs
+> only here, as `STRIPE_API_KEY`. Anything `NEXT_PUBLIC_*` ships to the browser.
+
+Every `NEXT_PUBLIC_*` is **baked into the bundle at build time**, so changing one needs a
+rebuild of the storefront, not a restart — the same trap as `MERCUR_BACKEND_URL` for the
+panels here.
 
 ### Running it locally
 

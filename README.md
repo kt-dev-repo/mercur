@@ -85,19 +85,33 @@ This monorepo includes the following packages and apps:
 │   └── vendor/         # Vendor portal extensions
 ├── packages/
 │   └── api/            # Medusa backend
+│       ├── integration-tests/   # Boot a real app against a real database
 │       ├── src/
 │       │   ├── api/         # Custom API routes
 │       │   ├── jobs/        # Background jobs
+│       │   ├── lib/         # Shared helpers, incl. the deployment overlay
 │       │   ├── links/       # Module links
-│       │   ├── modules/     # Custom modules
-│       │   ├── scripts/     # CLI scripts
-│       │   ├── subscribers/ # Event subscribers
+│       │   ├── modules/     # Custom modules, incl. the Resend provider
+│       │   ├── scripts/     # CLI scripts, incl. the seed
+│       │   ├── subscribers/ # Event subscribers — the transactional emails
 │       │   └── workflows/   # Business workflows
-│       └── medusa-config.ts
+│       └── medusa-config.ts     # Upstream's config + two lines (see below)
+├── deploy/             # Dokploy stack: Dockerfile, Compose, backups, smoke suite
+├── scripts/            # Repo tooling, incl. the Mercur version bump
+├── .github/workflows/  # CI, and the weekly upstream version check
 ├── blocks.json         # Mercur blocks configuration
 ├── package.json
 └── turbo.json
 ```
+
+Everything outside `apps/`, `packages/` and the root config files is this project's own —
+upstream's template has no equivalent, so those files can never conflict with an upgrade.
+
+**`medusa-config.ts` is upstream's file plus two lines.** Deployment settings — Redis,
+worker mode, cookie security, object storage, email, payments — live in
+`packages/api/src/lib/production-overlay.ts`, which it delegates to and which is a no-op
+unless the relevant variables are set. Add deployment settings there, never to the config
+itself, so an upstream change to it never conflicts.
 
 ### Utilities
 
@@ -171,6 +185,7 @@ npm run check-types
 npm run codegen                                    # once after install
 npm run check-types && npm run lint
 npm run test:unit --workspace @acme/api            # fast, no services needed
+npm run test:integration:modules --workspace @acme/api
 npm run test:integration:http --workspace @acme/api
 ```
 
@@ -194,6 +209,15 @@ present as a broken API rather than as what they are:
   via a snapshot; anything created *inside* a test does not. A flow split across several
   `it` blocks gives you a first test that passes and a second that 404s on the row the
   first just created. Keep a flow that builds on itself in one test.
+- **Integration tests cannot run from a git worktree nested inside this checkout**
+  (`.claude/worktrees/*`). Node resolution reaches both the worktree's and the parent's
+  `node_modules`, nested workflow steps then cross two copies of `awilix`, and it fails
+  with `parentContainer[ROLL_UP_REGISTRATIONS] is not a function` — surfacing as a **500 on
+  a route**, so it reads like a broken endpoint. Run from a flat clone, as CI does.
+
+What the suite covers: seed idempotency, seller lifecycle and scoping, the catalogue
+approval pipeline, multi-seller checkout splitting into one order group per seller, all
+three transactional emails, and the deployment's boot guards.
 
 The deployment has its own end-to-end suite — see [deploy/README.md](deploy/README.md).
 
@@ -203,6 +227,34 @@ The deployment has its own end-to-end suite — see [deploy/README.md](deploy/RE
 suites against Postgres and Redis service containers. Pull requests additionally run
 `deploy/smoke-test.sh`, which builds the image and drives a full stack — boot guards,
 both panels, a redeploy preserving data, backup round-trip, and the uploads migration.
+
+`.github/workflows/upstream-check.yml` runs weekly and opens an issue when the pinned
+Mercur or Medusa versions fall behind npm — see [Upgrading Mercur](#upgrading-mercur).
+
+## Taking money and sending email
+
+Both are off by default, and both fail *silently* when misconfigured — which is why each
+has a boot guard that refuses to start rather than falling back.
+
+| | Default | Enable with |
+|---|---|---|
+| Payments | `PAYMENTS=stub` — authorises everything, charges nothing | `PAYMENTS=stripe` + three Stripe secrets |
+| Email | `EMAIL_PROVIDER=none` — generated and dropped | `local` to log them, `resend` to deliver |
+
+**Payments.** Stripe is two integrations: `@medusajs/medusa/payment-stripe` charges the
+customer, `@mercurjs/payout-stripe-connect` transfers each seller their share. Payments
+are authorised, not captured (`capture: false`) — capturing the full amount before the
+split is known breaks the payout. `PAYMENTS` is a comma-separated list because Stripe
+does not acquire everywhere; see `PLAN-aba-payway-khqr.md` for the Cambodian case.
+
+**Email.** Three transactional emails, each a subscriber on an event that Mercur or Medusa
+already emits but that nothing previously listened for: the seller invitation, the
+password reset, and the order confirmation. The confirmation goes out once per *order
+group*, not once per seller order, so a three-seller cart produces one email showing the
+whole basket.
+
+Full setup, including the two separate Stripe webhook endpoints and their distinct signing
+secrets, is in [deploy/README.md](deploy/README.md).
 
 ## Relationship to upstream Mercur
 
