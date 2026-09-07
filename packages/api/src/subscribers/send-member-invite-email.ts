@@ -1,6 +1,9 @@
 import { SubscriberArgs, SubscriberConfig } from "@medusajs/framework"
 import { ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils"
 import { MemberInviteWorkflowEvents } from "@mercurjs/core/workflows"
+// This email deliberately keeps its own markup (see lib/email-layout.ts), but the date
+// formatting is not markup — it was a verbatim copy of formatDate, doc comment included.
+import { formatDate } from "../lib/email-layout"
 
 type MemberInviteCreated = {
   id: string
@@ -192,27 +195,6 @@ async function recordFailure(
 }
 
 /**
- * "11 September 2026", or undefined if the value is missing or unparseable. UTC on
- * purpose: the recipient's timezone is unknown, and a date that silently shifts by a day
- * is worse than one that is explicit about the day it means.
- */
-function formatExpiry(expiresAt?: string | Date) {
-  if (!expiresAt) {
-    return undefined
-  }
-  const date = expiresAt instanceof Date ? expiresAt : new Date(expiresAt)
-  if (Number.isNaN(date.getTime())) {
-    return undefined
-  }
-  return date.toLocaleDateString("en-GB", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  })
-}
-
-/**
  * The address and the URL are interpolated into markup, so both have to be escaped.
  * Neither is trusted: the address is whatever the operator typed into the invite form,
  * and the URL's origin comes from MERCUR_VENDOR_URL. Unescaped, a `<` or a quote in
@@ -249,7 +231,7 @@ export function buildInvitationHtml(
     : `<strong>${safeEmail}</strong> has been invited to join our marketplace as a seller. Accept the invitation to set up your store, list products, and start selling.`
 
   // A link that has quietly expired is worse than one that says when it will.
-  const expiry = formatExpiry(expiresAt)
+  const expiry = formatDate(expiresAt)
   const expiryLine = expiry
     ? `<tr><td style="font-size:13px;color:#71717a;padding-top:16px;">This invitation expires on ${escapeHtml(expiry)}.</td></tr>`
     : ""

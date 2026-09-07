@@ -63,6 +63,7 @@ export default async function storefrontCacheRevalidateHandler({
   event,
   container,
 }: SubscriberArgs<EventPayload | EventPayload[]>) {
+  const logger = container.resolve(ContainerRegistrationKeys.LOGGER)
   const url = process.env.STOREFRONT_REVALIDATE_URL
   const secret = process.env.STOREFRONT_REVALIDATE_SECRET
 
@@ -76,10 +77,6 @@ export default async function storefrontCacheRevalidateHandler({
   for (const payload of payloads) {
     const tags = await buildTags(container, event.name, payload ?? {})
     tags.forEach((tag) => tagSet.add(tag))
-  }
-
-  if (tagSet.size === 0) {
-    return
   }
 
   // Without a deadline a hung storefront pins this subscriber open for as long as
@@ -101,12 +98,14 @@ export default async function storefrontCacheRevalidateHandler({
     // storefront route (500) resolves normally, so without this check the cache
     // silently goes stale and nothing anywhere reports it.
     if (!response.ok) {
-      console.error(
+      logger.error(
         `[storefront-cache-revalidate] revalidation rejected: ${response.status} ${response.statusText}`
       )
     }
   } catch (error) {
-    console.error("[storefront-cache-revalidate] revalidation failed:", error)
+    logger.error(
+      `[storefront-cache-revalidate] revalidation failed: ${(error as Error).message}`
+    )
   }
 }
 

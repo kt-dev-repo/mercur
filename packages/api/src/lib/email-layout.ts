@@ -46,9 +46,15 @@ export function formatDate(value?: string | Date) {
 }
 
 /**
- * Money, from Medusa's minor-unit integers. `Intl` is given the currency so that the
- * symbol, its position and the number of decimals all follow the currency rather than
- * being guessed — JPY has no minor unit, and dividing it by 100 would be wrong.
+ * Money, in the currency's MAJOR unit — 10 means £10, not 10p.
+ *
+ * Do not add a `/ 100` here. Medusa v2 stores decimal amounts in the major unit, unlike
+ * v1 and unlike Stripe; `seed.ts` writes `amount: 10` for a $10 shipping option. Dividing
+ * would render every price at a hundredth of its value, and it would be wrong in a second
+ * way for the currencies that have no minor unit at all, such as JPY.
+ *
+ * `Intl` is given the currency so the symbol, its position and the number of decimals all
+ * follow the currency rather than being guessed.
  */
 export function formatMoney(amount: number, currencyCode: string) {
   const code = currencyCode.toUpperCase()

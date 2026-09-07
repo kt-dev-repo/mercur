@@ -1045,6 +1045,17 @@ KEEP=1 ./deploy/smoke-test.sh          # leave the stack up afterwards to poke a
 It works against Docker or Podman, and CI runs it on every pull request. The backend
 tests live in `packages/api` and are described in the repository README.
 
+To run it against Podman when the `docker` CLI on your machine points at Docker Desktop,
+point it at Podman's socket for the one command rather than switching your global context:
+
+```bash
+DOCKER_HOST="unix://$(podman machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}')" \
+  KEEP=1 ./deploy/smoke-test.sh
+```
+
+Last full run: **53 checks, 0 failures**, on Podman 6.1.0 (`applehv`, arm64), building the
+image from scratch.
+
 ### What was tested
 
 Run against Podman using the same command Dokploy issues:
