@@ -47,6 +47,34 @@ describe("order confirmation subscriber", () => {
     runWorkflow.mockResolvedValue({ result: group() })
   })
 
+
+  it("persists the total as a number whatever shape Medusa returned", async () => {
+    // `content` is not stored by the notification module, so this field is the only thing
+    // an integration test can assert the money against. A string total is exactly what the
+    // old `typeof === "number"` guard silently dropped, taking the Total, every Subtotal
+    // and every line price out of the receipt while the email still reported success.
+    for (const total of [4000, "4000", { valueOf: () => 4000, toString: () => "4000" }]) {
+      const c = makeContainer()
+      runWorkflow.mockResolvedValue({ result: group({ total }) })
+      await run({ id: "ogrp_1" }, c)
+
+      const arg = c.notificationService.createNotifications.mock.calls[0][0]
+      expect(arg.data.total).toEqual(4000)
+      expect(arg.data.currency_code).toEqual("eur")
+    }
+  })
+
+  it("omits the total rather than persisting a bogus one", async () => {
+    // undefined means "not supplied" and renders nothing. It must never become NaN or the
+    // string "undefined", either of which would print in the receipt.
+    const c = makeContainer()
+    runWorkflow.mockResolvedValue({ result: group({ total: undefined }) })
+    await run({ id: "ogrp_1" }, c)
+
+    const arg = c.notificationService.createNotifications.mock.calls[0][0]
+    expect(arg.data.total).toBeUndefined()
+  })
+
   it("sends exactly one email for a multi-seller purchase", async () => {
     // Not one per seller. Subscribing to order.placed instead of order_group.created
     // would send two here, and neither would show the whole basket.

@@ -123,6 +123,14 @@ export default async function sendOrderConfirmationEmailHandler({
       .map((order) => order.seller?.name)
       .filter((name): name is string => Boolean(name))
 
+    // Same reason as `seller_names`, for the same class of soft failure. Medusa types
+    // money as BigNumberValue, so `total` may arrive as a string or a BigNumber; when it
+    // did, the old `typeof === "number"` guard dropped the Total, every Subtotal and every
+    // line price from the receipt, and the email still sent looking clean. Persisting the
+    // NORMALISED number is what makes that observable — `content` is not stored, so an
+    // integration test has nothing else to assert against.
+    const groupTotal = toAmount(group.total)
+
     await notificationService.createNotifications({
       to: email,
       channel: "email",
@@ -134,6 +142,8 @@ export default async function sendOrderConfirmationEmailHandler({
         display_id: group.display_id,
         seller_count: orders.length,
         seller_names: sellerNames,
+        total: groupTotal,
+        currency_code: currency,
         idempotency_key: idempotencyKey,
       },
       content: {
