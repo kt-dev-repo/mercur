@@ -15,6 +15,12 @@ node_modules
 # Local-only Compose override used by deploy/README.md "Running it locally"
 deploy/docker-compose.local.yml
 
+# Agent worktrees. These are nested git checkouts of this same repository, so from the
+# parent's point of view they are just an untracked directory — `git add -A` would commit
+# an entire second checkout, node_modules and all, including any `.env` the nested
+# worktree's own gitignore was protecting. `.claude/skills/` stays tracked.
+.claude/worktrees/
+
 # Testing
 coverage
 
