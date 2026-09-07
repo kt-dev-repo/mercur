@@ -28,7 +28,6 @@ medusaIntegrationTestRunner({
   env: {},
   testSuite: ({ api, getContainer }) => {
     describe("seller scoping", () => {
-      let sellerA: { id: string; name: string }
       let sellerB: { id: string; name: string }
       let adminToken: string
 
@@ -67,7 +66,9 @@ medusaIntegrationTestRunner({
           return { id: seller.id, name }
         }
 
-        sellerA = await makeSeller("Scoping Store A", "a@scoping.test")
+        // Created but never asserted on: scoping is only meaningful with a second
+        // seller present for B to be isolated from.
+        await makeSeller("Scoping Store A", "a@scoping.test")
         sellerB = await makeSeller("Scoping Store B", "b@scoping.test")
 
         // An operator account. The runner seeds none, and `medusa user` is a CLI, so
