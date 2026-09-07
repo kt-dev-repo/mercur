@@ -1056,6 +1056,20 @@ DOCKER_HOST="unix://$(podman machine inspect --format '{{.ConnectionInfo.PodmanS
 Last full run: **53 checks, 0 failures**, on Podman 6.1.0 (`applehv`, arm64), building the
 image from scratch.
 
+After `KEEP=1`, tear the stack down with the container CLI rather than with Compose:
+
+```bash
+podman rm -f $(podman ps -aq --filter name=mercursmoke)
+podman volume rm mercursmoke_postgres-data mercursmoke_redis-data mercursmoke_uploads
+```
+
+`docker compose -p mercursmoke -f deploy/docker-compose.yml down -v` looks like the right
+command and silently does nothing: this file guards `POSTGRES_PASSWORD` with `${...:?}`,
+so Compose aborts before it touches anything unless you also pass the `--env-file` the
+smoke script generated in its temporary directory — which is gone by then. Removing the
+volumes matters if you intend to run the suite again: the re-seed and persistence checks
+are meaningless against an already-seeded volume.
+
 ### What was tested
 
 Run against Podman using the same command Dokploy issues:
