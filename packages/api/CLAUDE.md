@@ -54,9 +54,21 @@ Run these from `packages/api` unless noted otherwise:
 - `codegen`
 - `build`
 - `check-types`
+- `lint`
 - `test:integration:http`
 - `test:integration:modules`
 - `test:unit`
+
+## Lint
+
+`eslint.config.mjs` covers this package with the recommended JS and TypeScript sets and
+nothing bespoke. It is `.mjs` rather than `.js` because the package is CommonJS and an ESM
+config named `.js` makes Node reparse it with a warning on every run.
+
+Test files (`**/__tests__/**`, `integration-tests/**`) get `no-explicit-any` switched off.
+Test doubles stand in for Medusa services whose real types come from the generated,
+gitignored `.medusa/types/modules-bindings.d.ts` — absent in CI, which is the same reason
+the section below says to declare a module's slice by hand rather than infer it.
 
 ## Codegen
 

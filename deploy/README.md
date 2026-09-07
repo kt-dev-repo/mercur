@@ -970,7 +970,7 @@ sides, and when they disagree the feature fails quietly** — no error, no log l
 | `NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY` | publishable key from the seed, or **Settings → Publishable API keys** | Every store API call is rejected |
 | `NEXT_PUBLIC_BASE_URL` | `MERCUR_STOREFRONT_URL` | Customer password-reset emails link to the wrong host, or carry no link |
 | `REVALIDATE_SECRET` | `STOREFRONT_REVALIDATE_SECRET` | The revalidate hook is rejected; the storefront serves stale pages indefinitely |
-| — | `STOREFRONT_REVALIDATE_URL` | Must point at the storefront, or the hook reaches nothing |
+| — | `STOREFRONT_REVALIDATE_URL` | Must be the storefront's `/api/revalidate` route, **not** its origin, or the hook reaches nothing |
 | `NEXT_PUBLIC_VENDOR_URL` | `MERCUR_VENDOR_URL` | "Sell with us" links go nowhere useful |
 | `NEXT_PUBLIC_STRIPE_KEY` | the **publishable** twin of `STRIPE_API_KEY` | Checkout cannot mount Stripe elements |
 
@@ -1044,6 +1044,31 @@ KEEP=1 ./deploy/smoke-test.sh          # leave the stack up afterwards to poke a
 
 It works against Docker or Podman, and CI runs it on every pull request. The backend
 tests live in `packages/api` and are described in the repository README.
+
+To run it against Podman when the `docker` CLI on your machine points at Docker Desktop,
+point it at Podman's socket for the one command rather than switching your global context:
+
+```bash
+DOCKER_HOST="unix://$(podman machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}')" \
+  KEEP=1 ./deploy/smoke-test.sh
+```
+
+Last full run: **53 checks, 0 failures**, on Podman 6.1.0 (`applehv`, arm64), building the
+image from scratch.
+
+After `KEEP=1`, tear the stack down with the container CLI rather than with Compose:
+
+```bash
+podman rm -f $(podman ps -aq --filter name=mercursmoke)
+podman volume rm mercursmoke_postgres-data mercursmoke_redis-data mercursmoke_uploads
+```
+
+`docker compose -p mercursmoke -f deploy/docker-compose.yml down -v` looks like the right
+command and silently does nothing: this file guards `POSTGRES_PASSWORD` with `${...:?}`,
+so Compose aborts before it touches anything unless you also pass the `--env-file` the
+smoke script generated in its temporary directory — which is gone by then. Removing the
+volumes matters if you intend to run the suite again: the re-seed and persistence checks
+are meaningless against an already-seeded volume.
 
 ### What was tested
 

@@ -72,6 +72,18 @@ describe("password reset subscriber", () => {
     expect(await keyFor("first")).not.toEqual(await keyFor("second"))
   })
 
+  it("fingerprints the token with enough width that collisions are not a concern", async () => {
+    // `idempotency_key` is unique, so two tokens hashing alike means the second user's
+    // reset email is silently never sent. A 32-bit hash was 50% likely to do that within
+    // ~77k resets; this asserts the width that makes it a non-issue, because the symptom
+    // would otherwise only ever appear in production as one person's missing email.
+    const c = makeContainer()
+    await run({ entity_id: "a@b.com", actor_type: "user", token: "tok" }, c)
+
+    const key = c.notificationService.createNotifications.mock.calls[0][0].idempotency_key
+    expect(key).toMatch(/^password-reset-[0-9a-f]{32}$/)
+  })
+
   it("sends nothing when the event carries no identifier or token", async () => {
     for (const data of [
       {},

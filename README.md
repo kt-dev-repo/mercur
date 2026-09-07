@@ -199,6 +199,11 @@ docker run -d --name mercur-test-pg -p 5433:5432 \
 docker run -d --name mercur-test-redis -p 6380:6379 redis:7-alpine
 ```
 
+`podman run` works identically — substitute it for `docker run` above. Note the ports are
+deliberately 5433 and 6380, not the defaults, so these cannot collide with a Postgres or
+Redis you already run locally; probing 5432/6379 to check whether they are up will always
+say no.
+
 Two things about the test runner are worth knowing before you write a test, because both
 present as a broken API rather than as what they are:
 
@@ -282,13 +287,18 @@ npm run codegen
 
 Then run the full verification set under [Testing](#testing).
 
-`scripts/bump-mercur.mjs` exists because the versions live in **three** places that must
-move together — each workspace's dependencies, the root `overrides` (npm), and the root
-`resolutions` (pnpm/yarn). Editing them by hand is where partial upgrades come from, and a
-partial upgrade has no symptom: `package.json` claims one version, the override pins
-another, npm installs the override, and nothing reports the disagreement.
-`packages/api/src/lib/__tests__/version-pins.unit.spec.ts` fails the build when they
-disagree, so a partial bump cannot merge.
+`scripts/bump-mercur.mjs` exists because the versions live in **four** places that must
+move together — each workspace's dependencies, the root `overrides` (npm), the root
+`resolutions` (yarn), and the root `pnpm.overrides` (pnpm). Editing them by hand is where
+partial upgrades come from, and a partial upgrade has no symptom: `package.json` claims
+one version, the override pins another, npm installs the override, and nothing reports the
+disagreement. `packages/api/src/lib/__tests__/version-pins.unit.spec.ts` fails the build
+when they disagree, so a partial bump cannot merge.
+
+`pnpm.overrides` is the copy most easily missed, because nothing on an npm-only machine
+ever reads it: the script did not rewrite it and the test did not check it, so an upgrade
+left pnpm silently pinned to the previous version while every other manifest advertised
+the new one. Both now cover it.
 
 The script refuses to pin a version that is not published, so a typo fails before it has
 rewritten anything.

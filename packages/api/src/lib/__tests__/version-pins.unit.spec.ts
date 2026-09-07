@@ -4,9 +4,10 @@ import path from "path"
 /**
  * The pinned versions have to agree across every place they are written down.
  *
- * `@medusajs/*` and `zod` are pinned in three places: each workspace's own
- * dependencies, the root `overrides` (npm), and the root `resolutions` (pnpm/yarn).
- * They are duplicated so that consumers on any package manager resolve the same tree.
+ * `@medusajs/*` and `zod` are pinned in four places: each workspace's own dependencies,
+ * the root `overrides` (npm), the root `resolutions` (yarn), and the root
+ * `pnpm.overrides` (pnpm). They are duplicated so that consumers on any package manager
+ * resolve the same tree.
  *
  * That duplication is the hazard. An upgrade that bumps a dependency but not the
  * override has NO SYMPTOM: package.json claims 2.19.0, the override still pins 2.18.0,
@@ -32,9 +33,17 @@ const pinned = (deps: Record<string, string> = {}) =>
 
 describe("version pins", () => {
   it("declares overrides and resolutions identically", () => {
-    // npm reads `overrides`, pnpm and yarn read `resolutions`. If they drift, the tree
-    // depends on which package manager ran — the exact ambiguity pinning exists to remove.
+    // npm reads `overrides`, yarn reads `resolutions`. If they drift, the tree depends on
+    // which package manager ran — the exact ambiguity pinning exists to remove.
     expect(root.overrides).toEqual(root.resolutions)
+  })
+
+  it("declares pnpm.overrides identically to overrides", () => {
+    // The fourth copy, and the one that actually drifted: `bump-mercur.mjs` used to rewrite
+    // dependencies, overrides and resolutions but not this block, so an upgrade left pnpm
+    // pinned to the previous version with nothing anywhere reporting it. Asserted
+    // separately from the check above so the failure names the block that is wrong.
+    expect(root.pnpm?.overrides).toEqual(root.overrides)
   })
 
   it.each([

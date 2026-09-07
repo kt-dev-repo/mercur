@@ -428,6 +428,21 @@ medusaIntegrationTestRunner({
           [...((confirmations![0].data as { seller_names?: string[] }).seller_names ?? [])].sort()
         ).toEqual(["Alpha Store", "Beta Store"])
 
+        // The only place the money actually crossing Medusa's API is checked against what
+        // the receipt renders. Medusa types every total as BigNumberValue — BigNumberJS |
+        // number | string | IBigNumber — and the subscriber used to test `typeof === "number"`,
+        // which dropped the Total, every Subtotal and every line price the moment a
+        // non-number shape arrived. The email still sent, still looked clean, and every
+        // assertion here still passed. `content` is not persisted by the notification
+        // module, so the normalised value is put in `data` specifically to be asserted on.
+        const confirmationData = confirmations![0].data as {
+          total?: unknown
+          currency_code?: unknown
+        }
+        expect(typeof confirmationData.total).toEqual("number")
+        expect(confirmationData.total as number).toBeGreaterThan(0)
+        expect(typeof confirmationData.currency_code).toEqual("string")
+
         expect(seenBySeller.get(sellers.a.id)).toHaveLength(1)
         expect(seenBySeller.get(sellers.b.id)).toHaveLength(1)
         expect(seenBySeller.get(sellers.a.id)).not.toEqual(seenBySeller.get(sellers.b.id))

@@ -5,12 +5,12 @@
  *   npm run upgrade:mercur -- --mercur 2.3.4
  *   npm run upgrade:mercur -- --mercur 2.3.4 --medusa 2.19.0
  *
- * The versions live in three places that must move together: each workspace's own
- * dependencies, the root `overrides` (npm), and the root `resolutions` (pnpm/yarn).
- * Editing 27 entries by hand is where partial upgrades come from, and a partial upgrade
- * has no symptom — npm resolves the override and the manifest quietly lies about what is
- * installed. `version-pins.unit.spec.ts` fails the build when that happens; this script
- * is how you avoid causing it.
+ * The versions live in four places that must move together: each workspace's own
+ * dependencies, the root `overrides` (npm), the root `resolutions` (yarn), and the root
+ * `pnpm.overrides` (pnpm). Editing 40 entries by hand is where partial upgrades come from,
+ * and a partial upgrade has no symptom — npm resolves the override and the manifest
+ * quietly lies about what is installed. `version-pins.unit.spec.ts` fails the build when
+ * that happens; this script is how you avoid causing it.
  *
  * Upgrading is a version bump, never a merge: this repository consumes @mercurjs/* from
  * npm and shares no history with upstream. See "Relationship to upstream Mercur" in
@@ -90,6 +90,10 @@ for (const manifest of MANIFESTS) {
   rewriteSection(pkg.devDependencies, "devDependencies", manifest)
   rewriteSection(pkg.overrides, "overrides", manifest)
   rewriteSection(pkg.resolutions, "resolutions", manifest)
+  // `pnpm.overrides` is the fourth copy and the easiest to forget, because nothing on an
+  // npm-only machine ever reads it. Missing it produced exactly the partial upgrade this
+  // script exists to prevent: npm and yarn on the new version, pnpm silently on the old.
+  rewriteSection(pkg.pnpm?.overrides, "pnpm.overrides", manifest)
 
   fs.writeFileSync(file, JSON.stringify(pkg, null, 2) + "\n")
 }

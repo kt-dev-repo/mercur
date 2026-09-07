@@ -1,3 +1,4 @@
+import { createHash } from "crypto"
 import { SubscriberArgs, SubscriberConfig } from "@medusajs/framework"
 import { AuthWorkflowEvents, ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils"
 import { escapeHtml, renderEmail } from "../lib/email-layout"
@@ -106,13 +107,16 @@ export function buildResetUrl(actorType: string, token: string): string | undefi
  * A short, non-reversible fingerprint of the token, for the idempotency key. The raw
  * token is a JWT that grants a password reset; it must not be written into a key that
  * ends up in logs or in the notification table's indexes.
+ *
+ * SHA-256 rather than a cheap string hash, because a collision here is silent and costly.
+ * `idempotency_key` is a unique column, so two tokens that hash alike mean the second
+ * user's reset email is never sent while the handler reports success. The previous
+ * 32-bit hash reached a 50% chance of that after roughly 77k resets — and the rows
+ * persist, so the risk only ever grows. 128 bits of the digest is far past the point
+ * where that matters, and is still shorter than the JWT it stands in for.
  */
 function hashToken(token: string) {
-  let hash = 0
-  for (let i = 0; i < token.length; i++) {
-    hash = (Math.imul(31, hash) + token.charCodeAt(i)) | 0
-  }
-  return (hash >>> 0).toString(36)
+  return createHash("sha256").update(token).digest("hex").slice(0, 32)
 }
 
 export function buildPasswordResetHtml(email: string, resetUrl?: string) {
