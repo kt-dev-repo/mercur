@@ -67,6 +67,14 @@ npm run codegen       # required once after install, and after any route change
 npm run dev
 ```
 
+`npm run dev` needs a Postgres and a Redis, and a `packages/api/.env` pointing at them; it
+will not create the schema for you. On a fresh database, run
+`npm --workspace @acme/api exec -- medusa db:migrate --execute-safe-links` first, and
+`npm run seed --workspace @acme/api` if you want demo data — the seed is idempotent and is
+also what issues the publishable API key a storefront needs. Use ports 5434/6381 for the
+dev services, not the 5433/6380 the test containers use: the Medusa test runner creates and
+drops databases on those. Full walkthrough in the repository README.
+
 `codegen` writes `packages/api/.mercur/routes.d.ts`. Both panels import their route
 types from `@acme/api/_generated`, which resolves to that file, so `build` and
 `check-types` fail with `Cannot find module '@acme/api/_generated'` until it exists.

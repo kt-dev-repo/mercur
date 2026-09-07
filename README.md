@@ -21,28 +21,59 @@ If you've already cloned this repo, skip to [Development](#development).
 
 1. First [clone the repo](#clone) if you have not done so already
 
-2. Copy the example environment variables:
+2. Start a Postgres and a Redis for development. Any instance works; these ports are
+   chosen so they cannot collide with the **test** containers on 5433/6380, which the
+   Medusa test runner creates and drops databases on — dev data does not belong there.
+
+```bash
+podman run -d --name mercur-dev-pg -p 5434:5432 \
+  -e POSTGRES_USER=medusa -e POSTGRES_PASSWORD=medusa -e POSTGRES_DB=mercur_dev postgres:16-alpine
+podman run -d --name mercur-dev-redis -p 6381:6379 redis:7-alpine
+```
+
+   `docker run` works identically. Created without `--rm`, so `podman start mercur-dev-pg
+   mercur-dev-redis` brings them back later. Had they been created *with* `--rm`, stopping
+   would delete them and `start` would silently no-op, which surfaces as a bare
+   `AggregateError` at boot rather than anything naming a missing container.
+
+3. Copy the example environment variables:
 
 ```bash
 cp packages/api/.env.template packages/api/.env
 ```
 
-3. Update the `.env` file with your database connection string and other required variables:
+4. Fill in the `.env`. The template already carries working CORS and storefront values;
+   these four are what you must supply:
 
 ```
-DATABASE_URL=postgres://user:password@localhost:5432/mercur
-REDIS_URL=redis://localhost:6379
+DATABASE_URL=postgres://medusa:medusa@localhost:5434/mercur_dev
+REDIS_URL=redis://localhost:6381
 JWT_SECRET=your-super-secret-jwt-key
 COOKIE_SECRET=your-super-secret-cookie-key
 ```
 
-4. Install dependencies, generate the route types, and start the dev server:
+   Generate the two secrets with `openssl rand -hex 32`. Use **hex, not base64**, for
+   anything that ends up inside a `postgres://` URL: base64 emits `/`, `+` and `=`, and a
+   `/` in a password makes the URL unparseable with nothing in the error mentioning it.
+
+5. Install dependencies, generate the route types, create the schema, and start the dev
+   server:
 
 ```bash
 npm install --force
 npm run codegen
+npm --workspace @acme/api exec -- medusa db:migrate --execute-safe-links
+npm run seed --workspace @acme/api     # optional: 3 sellers, 12 products, 203 offers
 npm run dev
 ```
+
+   `db:migrate` is required on a fresh database — the dev server will not create the schema
+   for you. `--execute-safe-links` answers, non-interactively, the module-link prompt an
+   upgrade can raise; it only ever applies the safe actions.
+
+   The seed is optional but it is what gives you a publishable API key, which the storefront
+   cannot talk to the store API without. It is idempotent: re-running it on a seeded
+   database is a no-op.
 
    Install with npm, not bun: neither bun linker produces the workspace-hoisted
    `node_modules` layout Medusa needs, and the panels then fail to resolve their
@@ -57,9 +88,9 @@ npm run dev
    route. It is not part of `build` because Turborepo builds the panels before
    `packages/api`, so it has to run ahead of the build graph.
 
-5. Open `http://localhost:9000` to access the Medusa backend
-6. Open `http://localhost:7000` to access the admin dashboard
-7. Open `http://localhost:7001` to access the vendor dashboard
+6. Open `http://localhost:9000` to access the Medusa backend
+7. Open `http://localhost:7000` to access the admin dashboard
+8. Open `http://localhost:7001` to access the vendor dashboard
 
    The backend also serves both panels: the admin panel at
    `http://localhost:9000/dashboard` and the vendor panel at
@@ -356,6 +387,51 @@ That is a deliberate trade. A storefront is the part of a marketplace you custom
 and merging upstream's demo design into a customised storefront is worse than not doing
 it. The cost is that upstream's storefront fixes do not reach you automatically; its
 README lists the known issues carried over, which you now own.
+
+#### Running the storefront against this backend locally
+
+With the backend up on `:9000` and seeded, clone the storefront alongside this repo and
+copy its `.env.example` to `.env.local`. Four values have to agree with the backend; the
+rest of the file is fine as shipped.
+
+Read the publishable key out of the seeded database — the store API rejects every request
+without it, with a 400 that does not say why:
+
+```bash
+podman exec mercur-dev-pg psql -U medusa -d mercur_dev -t -A \
+  -c "SELECT token FROM api_key WHERE type='publishable' AND revoked_at IS NULL;"
+```
+
+| Storefront `.env.local` | Must agree with | Failure when it does not |
+|---|---|---|
+| `NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY` | the key above | every store API call 400s |
+| `MEDUSA_BACKEND_URL=http://localhost:9000` | the backend's origin | nothing loads |
+| `NEXT_PUBLIC_BASE_URL=http://localhost:3000` | `MERCUR_STOREFRONT_URL` | customer reset emails carry no link |
+| `REVALIDATE_SECRET` | `STOREFRONT_REVALIDATE_SECRET` | revalidation 401s; pages go stale silently |
+
+Two things that are easy to get wrong and produce no useful error:
+
+- **`STOREFRONT_REVALIDATE_URL` must end in `/api/revalidate`.** The backend POSTs to that
+  URL verbatim. Aimed at the bare origin it gets a 307 from Next's locale middleware,
+  which is not a success, so every product event logs `revalidation rejected: 307` and
+  nothing is ever revalidated.
+- **`NEXT_PUBLIC_DEFAULT_REGION` must be a country the backend has a region for**, or every
+  page 404s. The seed creates one region, "Europe", covering `de, dk, es, fr, gb, it, se`.
+
+Then `npm run dev` in the storefront and open `http://localhost:3000`. Storefront routes
+are `/[locale]/products/[handle]` and `/[locale]/sellers/[handle]` — for example
+`http://localhost:3000/de`. Check the pairing end to end:
+
+```bash
+# 200 {"revalidated":true,...} with the shared secret; 401 without
+curl -s -X POST http://localhost:3000/api/revalidate \
+  -H 'Content-Type: application/json' \
+  -H "x-revalidate-secret: $REVALIDATE_SECRET" \
+  -d '{"tags":["products"]}'
+```
+
+Every `NEXT_PUBLIC_*` is compiled into the bundle at **build** time, so changing one needs
+a rebuild, not a restart — a restart keeps serving the old value with no sign it is stale.
 
 ## AI agents
 
