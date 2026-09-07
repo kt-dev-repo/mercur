@@ -970,7 +970,7 @@ sides, and when they disagree the feature fails quietly** — no error, no log l
 | `NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY` | publishable key from the seed, or **Settings → Publishable API keys** | Every store API call is rejected |
 | `NEXT_PUBLIC_BASE_URL` | `MERCUR_STOREFRONT_URL` | Customer password-reset emails link to the wrong host, or carry no link |
 | `REVALIDATE_SECRET` | `STOREFRONT_REVALIDATE_SECRET` | The revalidate hook is rejected; the storefront serves stale pages indefinitely |
-| — | `STOREFRONT_REVALIDATE_URL` | Must point at the storefront, or the hook reaches nothing |
+| — | `STOREFRONT_REVALIDATE_URL` | Must be the storefront's `/api/revalidate` route, **not** its origin, or the hook reaches nothing |
 | `NEXT_PUBLIC_VENDOR_URL` | `MERCUR_VENDOR_URL` | "Sell with us" links go nowhere useful |
 | `NEXT_PUBLIC_STRIPE_KEY` | the **publishable** twin of `STRIPE_API_KEY` | Checkout cannot mount Stripe elements |
 
