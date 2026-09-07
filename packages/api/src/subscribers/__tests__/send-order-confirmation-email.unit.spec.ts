@@ -71,6 +71,41 @@ describe("buildOrderConfirmationHtml", () => {
     expect(html).toMatch(/€|EUR/)
   })
 
+  it("renders totals whichever shape Medusa hands back", () => {
+    // Medusa types money as BigNumberValue — BigNumberJS | number | string | IBigNumber —
+    // so query.graph may return a string or a BigNumber-like object. A `typeof === number`
+    // guard dropped every price in those cases and still sent a clean-looking receipt with
+    // no line prices, no subtotal and no total. Each shape must render identically.
+    const shapes: Record<string, unknown> = {
+      number: 2000,
+      string: "2000",
+      bigNumberLike: { valueOf: () => 2000, toString: () => "2000" },
+    }
+
+    for (const [name, value] of Object.entries(shapes)) {
+      const html = buildOrderConfirmationHtml(
+        1,
+        [order({ total: value, items: [{ title: "Widget", quantity: 2, total: value }] })],
+        value as never,
+        "eur"
+      )
+
+      expect([name, html.includes(">Total<")]).toEqual([name, true])
+      expect([name, html.includes("Subtotal")]).toEqual([name, true])
+      // 2000 major units in EUR, formatted by Intl — the same for all three shapes.
+      // Intl may use a comma, a dot, or a narrow/non-breaking space as the group separator.
+      expect([name, /2[,.\u00a0\u202f\s]000/.test(html)]).toEqual([name, true])
+    }
+  })
+
+  it("prints a zero total rather than omitting it", () => {
+    // 0 is a real amount — a fully discounted order — and must not be confused with
+    // "no total was supplied", which is the only case that renders nothing.
+    const html = buildOrderConfirmationHtml(1, [order({ total: 0 })], 0, "eur")
+
+    expect(html).toContain(">Total<")
+  })
+
   it("does not invent a total it was not given", () => {
     const html = buildOrderConfirmationHtml(1, [order({ total: undefined })], undefined, "eur")
 

@@ -5,14 +5,38 @@ import { escapeHtml, formatMoney, renderEmail } from "../lib/email-layout"
 
 type OrderGroupCreated = { id: string }
 
-type OrderItem = { title?: string; quantity?: number; total?: number }
+/**
+ * Medusa types every money field as `BigNumberValue`, which is
+ * `BigNumberJS | number | string | IBigNumber` — what `query.graph` actually hands back
+ * depends on the field and the serialisation path. Typing these as `number` and testing
+ * `typeof x === "number"` silently dropped every price the moment one arrived as a string
+ * or a BigNumber, and the receipt still sent, still looked fine, and still reported
+ * success. Accept the union and normalise once, at the edge.
+ */
+type MoneyValue = number | string | { valueOf(): unknown } | null
+
+type OrderItem = { title?: string; quantity?: number; total?: MoneyValue }
 type ChildOrder = {
   id: string
   display_id?: number
-  total?: number
+  total?: MoneyValue
   currency_code?: string
   items?: OrderItem[]
   seller?: { name?: string } | null
+}
+
+/**
+ * A finite number, or undefined. `undefined` means "we were given no total", which renders
+ * nothing — distinct from a total of 0, which is a real amount and must still print.
+ */
+function toAmount(value: MoneyValue | undefined): number | undefined {
+  if (value === null || value === undefined || value === "") {
+    return undefined
+  }
+  // BigNumberJS and Medusa's IBigNumber both carry a usable valueOf/toString; Number()
+  // goes through that, so this covers all four shapes of BigNumberValue.
+  const amount = Number(value)
+  return Number.isFinite(amount) ? amount : undefined
 }
 
 /**
@@ -68,7 +92,7 @@ export default async function sendOrderConfirmationEmailHandler({
     const group = result as {
       id: string
       display_id?: number
-      total?: number
+      total?: MoneyValue
       currency_code?: string
       cart?: { email?: string } | null
       orders?: ChildOrder[]
@@ -142,7 +166,7 @@ export default async function sendOrderConfirmationEmailHandler({
 export function buildOrderConfirmationHtml(
   displayId: number | undefined,
   orders: ChildOrder[],
-  total: number | undefined,
+  total: MoneyValue | undefined,
   currencyCode: string
 ) {
   const sections = orders
@@ -158,9 +182,10 @@ export function buildOrderConfirmationHtml(
         .map((item) => {
           const title = escapeHtml(item.title ?? "Item")
           const quantity = item.quantity ?? 1
+          const itemTotal = toAmount(item.total)
           const line =
-            typeof item.total === "number"
-              ? escapeHtml(formatMoney(item.total, order.currency_code ?? currencyCode))
+            itemTotal !== undefined
+              ? escapeHtml(formatMoney(itemTotal, order.currency_code ?? currencyCode))
               : ""
           return `<tr>
                 <td style="padding:4px 0;font-size:14px;color:#52525b;">${title} &times; ${quantity}</td>
@@ -169,12 +194,13 @@ export function buildOrderConfirmationHtml(
         })
         .join("")
 
+      const subtotal = toAmount(order.total)
       const orderTotal =
-        typeof order.total === "number"
+        subtotal !== undefined
           ? `<tr>
                 <td style="padding:8px 0 0;font-size:13px;color:#71717a;">Subtotal</td>
                 <td style="padding:8px 0 0;font-size:13px;color:#71717a;text-align:right;">${escapeHtml(
-                  formatMoney(order.total, order.currency_code ?? currencyCode)
+                  formatMoney(subtotal, order.currency_code ?? currencyCode)
                 )}</td>
               </tr>`
           : ""
@@ -191,13 +217,14 @@ export function buildOrderConfirmationHtml(
     })
     .join("")
 
+  const grandTotal = toAmount(total)
   const totalHtml =
-    typeof total === "number"
+    grandTotal !== undefined
       ? `<table width="100%" cellpadding="0" cellspacing="0" style="margin-top:24px;border-top:1px solid #e4e4e7;">
             <tr>
               <td style="padding-top:12px;font-size:15px;font-weight:600;color:#18181b;">Total</td>
               <td style="padding-top:12px;font-size:15px;font-weight:600;color:#18181b;text-align:right;">${escapeHtml(
-                formatMoney(total, currencyCode)
+                formatMoney(grandTotal, currencyCode)
               )}</td>
             </tr>
           </table>`
