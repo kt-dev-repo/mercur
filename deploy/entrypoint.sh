@@ -72,6 +72,36 @@ require_secrets() {
   fi
 }
 
+# Creates the first administrator, so a fresh deployment is usable without opening a
+# container terminal.
+#
+# This has to exist because there is no other way in. A brand new deployment has no users,
+# the admin dashboard ships only /login and /invite, and /invite needs a token that only an
+# existing admin can issue. Without a bootstrap step the operator must exec into the
+# container and run `medusa user` by hand — the one manual step in an otherwise automated
+# deploy, and the one people get stuck on.
+#
+# Idempotent: `medusa user` refuses a duplicate email, and that refusal is treated as
+# success because it means the account already exists. Never fatal — an admin that cannot
+# be created must not take down a marketplace that is otherwise fine, exactly as with the
+# seed below.
+create_admin_user() {
+  [ -n "$ADMIN_EMAIL" ] && [ -n "$ADMIN_PASSWORD" ] || return 0
+
+  echo "[entrypoint] ensuring an admin user exists for $ADMIN_EMAIL..."
+  # Output is captured rather than streamed so the password cannot reach the logs if the
+  # CLI ever echoes its arguments back in an error.
+  if out="$(npx medusa user -e "$ADMIN_EMAIL" -p "$ADMIN_PASSWORD" 2>&1)"; then
+    echo "[entrypoint] admin user created."
+  elif printf '%s' "$out" | grep -qiE "already exists|duplicate key|unique constraint"; then
+    echo "[entrypoint] admin user already exists — nothing to do."
+  else
+    echo "[entrypoint] WARNING: could not create the admin user. Starting anyway." >&2
+    echo "[entrypoint] Create one by hand with:" >&2
+    echo "[entrypoint]   npx medusa user -e you@example.com -p 'your-password'" >&2
+  fi
+}
+
 run_migrations() {
   echo "[entrypoint] running database migrations..."
   # --execute-safe-links, because this runs unattended. `db:migrate` also syncs
@@ -94,6 +124,9 @@ case "$ROLE" in
     else
       echo "[entrypoint] RUN_MIGRATIONS=false — skipping migrations."
     fi
+    # Before the seed: the operator needs a way in whether or not demo data exists.
+    create_admin_user
+
     # Nothing here decides whether to seed. That used to be a marker file at
     # /app/static/.mercur-seeded — on the uploads volume, guarding data in the
     # postgres volume — and it broke both ways: losing the database but keeping
