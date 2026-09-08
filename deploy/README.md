@@ -190,6 +190,64 @@ panels calling `http://` from an `https://` page, which browsers block — you g
 
 ---
 
+## Rotating a leaked secret
+
+Assume any secret that has been pasted into a chat, a ticket, a screenshot or a shared
+terminal is public. Rotate it. The five below are not equally easy, and one of them will
+lock you out of your own database if you change it the obvious way.
+
+### The easy four
+
+`JWT_SECRET`, `COOKIE_SECRET`, `STOREFRONT_REVALIDATE_SECRET` and `RESEND_API_KEY` are read
+from the environment on every boot. Generate a new value, update the **Environment** tab,
+and redeploy.
+
+```bash
+openssl rand -base64 48   # JWT_SECRET, COOKIE_SECRET — run once per secret
+openssl rand -hex 32      # STOREFRONT_REVALIDATE_SECRET
+```
+
+Generate them on your own machine. Do not have them generated anywhere they would be
+written down — that is how the first one leaked.
+
+What each rotation costs you:
+
+| Secret | Effect of rotating |
+|---|---|
+| `JWT_SECRET` | every session token is invalidated; everyone signs in again |
+| `COOKIE_SECRET` | same, for cookie-backed sessions |
+| `STOREFRONT_REVALIDATE_SECRET` | **must change in both places at once** — the backend and the storefront's `REVALIDATE_SECRET`. Until they match again the hook 401s and pages go stale silently |
+| `RESEND_API_KEY` | revoke the old key in the Resend dashboard too; changing it here does not disable it there |
+
+`RESEND_API_KEY` is the one to treat as urgent. It can send mail as your verified domain
+until you revoke it at the provider, and nothing in this stack can stop that.
+
+### `POSTGRES_PASSWORD` — do not just change it
+
+Postgres writes this into the database on first start. Editing the variable does **not**
+change the database's password; it only changes what the backend tries to connect with, so
+the backend is locked out of its own data. See the warning in Step 3.
+
+Rotate it inside Postgres first, then update the variable to match:
+
+```bash
+# 1. change it in the database
+docker compose -p YOUR-PROJECT -f deploy/docker-compose.yml exec postgres \
+  psql -U mercur -d mercur -c "ALTER USER mercur WITH PASSWORD 'NEW-PASSWORD-HERE';"
+
+# 2. put the same value in the Environment tab, then redeploy
+```
+
+Use `openssl rand -hex 32`. **Hex, not base64** — this password is interpolated into a
+`postgres://` URL, and base64 emits `/`, `+` and `=`, which make that URL unparseable. The
+entrypoint refuses to start rather than retry silently, but it is easier not to hit it.
+
+### S3 / object storage keys
+
+Issue a new key pair in your object store, update `S3_ACCESS_KEY_ID` and
+`S3_SECRET_ACCESS_KEY`, redeploy, then delete the old pair at the provider. Deleting first
+leaves backups failing until the redeploy lands.
+
 ## Troubleshooting
 
 ### Every page shows a plain `404 page not found`
