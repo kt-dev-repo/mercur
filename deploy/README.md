@@ -250,6 +250,46 @@ leaves backups failing until the redeploy lands.
 
 ## Troubleshooting
 
+### Every page shows `Bad Gateway` (502)
+
+A 404 comes from Traefik when no router matches. A **502 is different**: a router matched,
+Traefik tried to reach a container, and could not. Three causes, in the order worth
+checking.
+
+**1. The service has no router on the entrypoint you are using.** The most common one, and
+the least obvious, because `http://` works while `https://` does not — or the reverse. A
+service needs a `websecure` router to answer https at all; having only a `web` router means
+every https request dies at Traefik with the container perfectly healthy.
+
+Check what the compose file actually publishes:
+
+```bash
+docker compose -p YOUR-PROJECT -f deploy/docker-compose.yml config \
+  | grep -E "routers|entrypoints|loadbalancer.server.port"
+```
+
+You should see **two** routers per service, `-web` and `-websecure`, and the websecure one
+needs both `tls: "true"` and a `certresolver`. This backend stack ships both. The storefront
+repository's stack shipped its websecure labels commented out, which produced exactly this
+symptom on the storefront hostname while the backend was fine.
+
+**2. Traefik is pointed at the wrong port.** `traefik.http.services.<name>.loadbalancer.server.port`
+must equal the port the container actually listens on — the `PORT`/`EXPOSE` in its
+Dockerfile. They live in different files and drift silently; nothing validates them against
+each other. The backend is `9000`, the storefront `8000`.
+
+**3. The container is not running, or not healthy.** Traefik will not route to a container
+that fails its healthcheck.
+
+```bash
+docker compose -p YOUR-PROJECT -f deploy/docker-compose.yml ps
+docker compose -p YOUR-PROJECT -f deploy/docker-compose.yml logs --tail=50 backend
+```
+
+`Restarting` in a loop is usually a boot guard refusing a bad configuration — the message
+says which variable. `unhealthy` with the process alive usually means it is up but not yet
+answering `/health`; give it a minute on first boot, when migrations run.
+
 ### Every page shows a plain `404 page not found`
 
 That page comes from Dokploy's router, not from Mercur — it means no route
@@ -1017,6 +1057,17 @@ Deploy it from that repository's `deploy/docker-compose.yml`, joining the same
 `dokploy-network` so Traefik can route it, with a different `DOMAIN` and `TRAEFIK_ROUTER`
 from this stack.
 
+**It needs its own HTTPS router, and its own certificate.** Nothing is shared: the two
+stacks are separate Traefik services on separate hostnames, so the certificate issued for
+`api.example.com` does nothing for `shop.example.com`. The storefront's compose must
+publish a `websecure` router with `tls=true` and a `certresolver`, exactly as this stack
+does — its labels shipped commented out, and the symptom was a Bad Gateway on the
+storefront hostname while the backend answered normally. See
+[Every page shows `Bad Gateway`](#every-page-shows-bad-gateway-502).
+
+**The storefront container listens on 8000**, not 9000. Its Traefik
+`loadbalancer.server.port` must say 8000 to match.
+
 #### The contract between the two
 
 The two are joined by environment variables, not code. **Every row must agree on both
@@ -1112,7 +1163,13 @@ DOCKER_HOST="unix://$(podman machine inspect --format '{{.ConnectionInfo.PodmanS
 ```
 
 Last full run: **53 checks, 0 failures**, on Podman 6.1.0 (`applehv`, arm64), building the
-image from scratch.
+image from scratch. Re-run on 2026-09-08 against `main` after the storefront moved to port
+8000: 53/53 again.
+
+Note what the suite does **not** cover: it exercises this backend stack only. The
+storefront deploys from its own repository, has no CI there, and nothing in this suite
+checks its Traefik labels or its port — which is how a missing `websecure` router reached
+production.
 
 After `KEEP=1`, tear the stack down with the container CLI rather than with Compose:
 
