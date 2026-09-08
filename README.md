@@ -406,7 +406,7 @@ podman exec mercur-dev-pg psql -U medusa -d mercur_dev -t -A \
 |---|---|---|
 | `NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY` | the key above | every store API call 400s |
 | `MEDUSA_BACKEND_URL=http://localhost:9000` | the backend's origin | nothing loads |
-| `NEXT_PUBLIC_BASE_URL=http://localhost:3000` | `MERCUR_STOREFRONT_URL` | customer reset emails carry no link |
+| `NEXT_PUBLIC_BASE_URL=http://localhost:8000` | `MERCUR_STOREFRONT_URL` | customer reset emails carry no link |
 | `REVALIDATE_SECRET` | `STOREFRONT_REVALIDATE_SECRET` | revalidation 401s; pages go stale silently |
 
 Two things that are easy to get wrong and produce no useful error:
@@ -418,13 +418,13 @@ Two things that are easy to get wrong and produce no useful error:
 - **`NEXT_PUBLIC_DEFAULT_REGION` must be a country the backend has a region for**, or every
   page 404s. The seed creates one region, "Europe", covering `de, dk, es, fr, gb, it, se`.
 
-Then `npm run dev` in the storefront and open `http://localhost:3000`. Storefront routes
+Then `npm run dev` in the storefront and open `http://localhost:8000`. Storefront routes
 are `/[locale]/products/[handle]` and `/[locale]/sellers/[handle]` — for example
-`http://localhost:3000/de`. Check the pairing end to end:
+`http://localhost:8000/de`. Check the pairing end to end:
 
 ```bash
 # 200 {"revalidated":true,...} with the shared secret; 401 without
-curl -s -X POST http://localhost:3000/api/revalidate \
+curl -s -X POST http://localhost:8000/api/revalidate \
   -H 'Content-Type: application/json' \
   -H "x-revalidate-secret: $REVALIDATE_SECRET" \
   -d '{"tags":["products"]}'
