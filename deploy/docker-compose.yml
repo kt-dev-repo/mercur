@@ -67,6 +67,13 @@ services:
       # This container owns migrations; the worker below never runs them.
       RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
       RUN_SEED: ${RUN_SEED:-false}
+      # First administrator, created on boot when both are set. A fresh deployment
+      # otherwise has no way in: the dashboard ships only /login and /invite, and an
+      # invite needs a token an existing admin has to issue. Idempotent, and never
+      # fatal — see create_admin_user in entrypoint.sh. Only the `server` role runs it,
+      # so the worker cannot race it.
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       MEDUSA_WORKER_MODE: server
       # sslmode=disable is required for the bundled Postgres: Medusa turns database SSL
       # on when NODE_ENV=production, and this container serves no TLS, so the connection

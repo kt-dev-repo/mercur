@@ -49,7 +49,7 @@ secrets, then Save.
 
 ```
 DOMAIN=api.example.com
-MERCUR_BACKEND_URL=http://api.example.com
+MERCUR_BACKEND_URL=https://api.example.com
 
 JWT_SECRET=
 COOKIE_SECRET=
@@ -58,17 +58,20 @@ POSTGRES_PASSWORD=
 POSTGRES_USER=mercur
 POSTGRES_DB=mercur
 
-STORE_CORS=http://api.example.com
-ADMIN_CORS=http://api.example.com
-VENDOR_CORS=http://api.example.com
-AUTH_CORS=http://api.example.com
+STORE_CORS=https://api.example.com
+ADMIN_CORS=https://api.example.com
+VENDOR_CORS=https://api.example.com
+AUTH_CORS=https://api.example.com
 
 RUN_MIGRATIONS=true
 RUN_SEED=false
 
-INSECURE_COOKIES=true
+INSECURE_COOKIES=false
 
 FILE_STORAGE=local
+
+ADMIN_EMAIL=you@example.com
+ADMIN_PASSWORD=
 ```
 
 Generate `JWT_SECRET` and `COOKIE_SECRET` by running this twice, using a
@@ -99,15 +102,26 @@ database on first start. Changing it later does not update the database, it just
 locks your backend out — and the only fix is deleting the database volume, which
 deletes your data.
 
-**Start with `http://`, not `https://`.** You do not have a certificate yet.
-Step 6 covers switching over once you do.
+**Use `https://` from the start.** You do not have a certificate yet — that is fine.
+Traefik requests one the first time something asks for `https://your-domain`, and the
+DNS record from Step 1 is the only precondition. Nothing here has to change afterwards.
 
-**`INSECURE_COOKIES=true` is required while you are on `http://`.** Medusa marks
-the session cookie `Secure` whenever `NODE_ENV=production`, and no browser will
-store a `Secure` cookie from an `http` page — so the panels accept your password,
-return 200, and drop you straight back on the login screen with no error at all.
-This setting removes the flag. It is a genuine downgrade: sessions travel in the
-clear. Step 6 turns it back off.
+This matters because `MERCUR_BACKEND_URL` is compiled *into* the panels at build time.
+Starting on `http://` and moving to `https://` later is not an edit and a restart, it is
+a **full rebuild** — ten to twenty minutes — and until you do it the panels call `http`
+from an `https` page and every request is blocked.
+
+The `web` router stays published alongside the secure one, and there is no forced
+redirect, so `http://your-domain/health` keeps answering while the certificate is being
+issued. You have a way to check on the deploy either way.
+
+**Leave `INSECURE_COOKIES=false`.** It exists only for serving the panels over plain
+`http` — Medusa marks the session cookie `Secure` when `NODE_ENV=production`, and no
+browser stores a `Secure` cookie from an `http` page, so the panels accept your password,
+return 200, and bounce you back to the login screen with no error anywhere. Setting it to
+`true` removes the flag and sends your sessions in the clear. On `https` you never need
+it. See [the login-loop entry](#the-panel-accepts-the-password-then-returns-to-the-login-screen)
+if you are stuck on `http` for some other reason.
 
 ### Why there are two URL settings
 
@@ -140,13 +154,32 @@ curl -i http://api.example.com/health
 `HTTP/1.1 200 OK` means you are up. Anything else — start at
 [Troubleshooting](#troubleshooting).
 
-## Step 5 — create your admin user
+## Step 5 — sign in
 
-**A fresh deployment has no users.** Nothing creates an administrator for you, so
-you must create one before you can sign in.
+If you set `ADMIN_EMAIL` and `ADMIN_PASSWORD` in Step 3, your account already exists — the
+first boot created it. Open `https://api.example.com/dashboard` and sign in.
 
-Open the service's **Terminal** in Dokploy, select the `backend` container, and
-run:
+Confirm it from the command line first if you prefer:
+
+```bash
+curl -s -X POST https://api.example.com/auth/user/emailpass \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com","password":"your-password"}'
+```
+
+A long `{"token":"eyJ..."}` means success.
+
+Creating the account is idempotent: every later boot sees it already exists and does
+nothing. Changing `ADMIN_PASSWORD` afterwards does **not** change the password of an
+account that already exists — do that from the dashboard.
+
+### If you left those blank
+
+Nothing creates an administrator for you, and there is no other way in. A fresh deployment
+has no users, and the dashboard offers only a login form and an invite page — an invite
+needs a token that an existing administrator has to issue.
+
+Open the service's **Terminal** in Dokploy, select the `backend` container, and run:
 
 ```bash
 cd /app && npx medusa user -e you@example.com -p 'your-password'
@@ -154,39 +187,12 @@ cd /app && npx medusa user -e you@example.com -p 'your-password'
 
 Wait for `User created successfully.`
 
-`cd /app` is required — Dokploy's terminal starts you in `/`, where the command
-cannot find itself and fails with `could not determine executable to run`. Do not
-use `sudo`; it is not installed and is not needed.
+`cd /app` is required — Dokploy's terminal starts you in `/`, where the command cannot find
+itself and fails with `could not determine executable to run`. Do not use `sudo`; it is not
+installed and is not needed.
 
-Confirm it worked before opening a browser:
-
-```bash
-curl -s -X POST http://api.example.com/auth/user/emailpass \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"you@example.com","password":"your-password"}'
-```
-
-A long `{"token":"eyJ..."}` means success. Now sign in at
-`http://api.example.com/dashboard`. If the page accepts your password and then
-returns to the login screen, `INSECURE_COOKIES` is not set — see
-[Troubleshooting](#the-panel-accepts-the-password-then-returns-to-the-login-screen).
-
-## Step 6 — switch on HTTPS
-
-Once DNS resolves, Dokploy can obtain a Let's Encrypt certificate for your
-domain. After `https://api.example.com/health` works:
-
-1. Go back to the **Environment** tab
-2. Change **every** `http://` to `https://` — that is `MERCUR_BACKEND_URL` and
-   all four `*_CORS` values
-3. Set `INSECURE_COOKIES=false` — this is the point of the exercise; leaving it
-   on keeps your session cookies unencrypted
-4. Save, then click **Rebuild**
-
-**It must be Rebuild, not Restart.** `MERCUR_BACKEND_URL` is compiled into the
-panels' JavaScript, and only a rebuild recompiles them. A restart leaves the
-panels calling `http://` from an `https://` page, which browsers block — you get
-"Failed to fetch" on login.
+Setting `ADMIN_EMAIL` and `ADMIN_PASSWORD` and redeploying does the same thing, so you can
+do that instead.
 
 ---
 
@@ -334,7 +340,7 @@ curl -s -i -X POST http://api.example.com/auth/session \
   -H "Authorization: Bearer $TOKEN" | grep -i '^set-cookie' || echo "no cookie set"
 ```
 
-Set `INSECURE_COOKIES=true` and **Rebuild**, or finish [Step 6](#step-6--switch-on-https)
+Set `INSECURE_COOKIES=true` and **Rebuild**, or move to `https://`
 and use https — on https the cookie works and this setting is not needed.
 
 ### Signing in says "Invalid email or password"
@@ -520,7 +526,7 @@ The four `*_CORS` values each fall back to `MERCUR_BACKEND_URL`, so the panels w
 even if you omit them. Set them explicitly anyway: they are what you edit when you
 move to `https` and when you add a storefront origin.
 
-`INSECURE_COOKIES` is covered in Step 3 and Step 6. It only ever needs to be true
+`INSECURE_COOKIES` is covered in Step 3. It only ever needs to be true
 while the site is served over plain http.
 
 `FILE_STORAGE` decides where uploaded images and videos go — `local` (the default,

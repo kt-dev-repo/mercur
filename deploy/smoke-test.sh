@@ -115,6 +115,8 @@ AUTH_CORS=${BASE}
 INSECURE_COOKIES=true
 RUN_MIGRATIONS=true
 RUN_SEED=true
+ADMIN_EMAIL=boot-admin@test.local
+ADMIN_PASSWORD=BootPass123!
 FILE_STORAGE=local
 COMPOSE_PROFILES=backup
 S3_ENDPOINT=http://${RUSTFS}:9000
@@ -237,6 +239,18 @@ assert_eq "200" "$(curl -s -o /dev/null -w '%{http_code}' "${BASE}"/seller/)"   
 assert_eq "3"  "$(psql_q 'select count(*) from seller;')"  "seed created 3 sellers"
 assert_eq "12" "$(psql_q 'select count(*) from product;')" "seed created 12 products"
 
+# The entrypoint creates ADMIN_EMAIL/ADMIN_PASSWORD on first boot, so a fresh deployment
+# is usable without exec-ing into the container. This is the whole point of the setting:
+# a fresh install has no users and the dashboard cannot bootstrap one, so if this silently
+# did nothing the operator would be locked out with no indication why.
+BOOT_TOKEN=$(curl -s -X POST "${BASE}/auth/user/emailpass" -H 'Content-Type: application/json' \
+  -d '{"email":"boot-admin@test.local","password":"BootPass123!"}' | sed 's/.*"token":"//;s/".*//')
+if [ -n "$BOOT_TOKEN" ]; then ok "ADMIN_EMAIL/ADMIN_PASSWORD created an admin on boot"; else bad "ADMIN_EMAIL/ADMIN_PASSWORD did not create an admin"; fi
+
+# The password must not reach the logs.
+assert_eq "0" "$(dc logs backend 2>/dev/null | grep -c 'BootPass123!' | tr -d ' ')" \
+  "the admin password is never printed to the container log"
+
 docker exec -w /app "${PROJECT}-backend-1" npx medusa user -e smoke@test.local -p 'SmokePass123!' >/dev/null 2>&1
 TOKEN=$(curl -s -X POST "${BASE}/auth/user/emailpass" -H 'Content-Type: application/json' \
   -d '{"email":"smoke@test.local","password":"SmokePass123!"}' | sed 's/.*"token":"//;s/".*//')
@@ -267,7 +281,15 @@ assert_eq "SmokeRenamed" "$(psql_q 'select name from store;')" "store name survi
 assert_eq "3"   "$(psql_q 'select count(*) from seller;')"      "sellers survive"
 assert_eq "12"  "$(psql_q 'select count(*) from product;')"     "products survive"
 assert_eq "203" "$(psql_q 'select count(*) from offer;')"       "offers survive"
-assert_eq "1"   "$(psql_q 'select count(*) from "user";')"    "the admin user survives"
+# By email, not by row count. Counting broke the moment the stack gained a second admin,
+# and it was never what this asserts: that a redeploy does not wipe the users table.
+assert_eq "1" "$(psql_q "select count(*) from \"user\" where email='smoke@test.local';")" \
+  "the admin user survives"
+# Idempotency of the boot bootstrap, across a real restart. create_admin_user runs on every
+# boot, so if the "already exists" branch ever stops matching this becomes 2 and every
+# redeploy quietly adds another row.
+assert_eq "1" "$(psql_q "select count(*) from \"user\" where email='boot-admin@test.local';")" \
+  "the boot-created admin is not duplicated on the next boot"
 assert_eq "0"   "$(docker inspect "${PROJECT}-backend-1" --format '{{.RestartCount}}')" \
   "the backend did not restart-loop (a failed re-seed used to)"
 assert_contains "$(dc logs backend 2>&1 | tail -80)" "Nothing to do" \
