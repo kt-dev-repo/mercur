@@ -1168,14 +1168,19 @@ DOCKER_HOST="unix://$(podman machine inspect --format '{{.ConnectionInfo.PodmanS
   KEEP=1 ./deploy/smoke-test.sh
 ```
 
-Last full run: **53 checks, 0 failures**, on Podman 6.1.0 (`applehv`, arm64), building the
-image from scratch. Re-run on 2026-09-08 against `main` after the storefront moved to port
-8000: 53/53 again.
+Last full run: **56 checks, 0 failures**, on Podman 6.1.0 (`applehv`, arm64), building the
+image from scratch, on 2026-09-09. The count grew from 53 when `ADMIN_EMAIL` /
+`ADMIN_PASSWORD` gained coverage: that an admin is created on boot, that the password never
+reaches the container log, and that a second boot does not add a duplicate row.
 
 Note what the suite does **not** cover: it exercises this backend stack only. The
-storefront deploys from its own repository, has no CI there, and nothing in this suite
-checks its Traefik labels or its port — which is how a missing `websecure` router reached
-production.
+storefront deploys from its own repository, and nothing here checks its Traefik labels or
+its port — which is how a missing `websecure` router once reached production.
+
+That gap is now covered on the other side. `kt-dev-repo/mercur-storefront` has its own CI,
+including a `deploy/verify-compose.sh` that asserts both routers exist, that the secure one
+sets `tls=true` and names a certresolver, and that Traefik's port matches the Dockerfile's.
+Changing the storefront's deploy stack is checked there, not here.
 
 After `KEEP=1`, tear the stack down with the container CLI rather than with Compose:
 
